@@ -56,7 +56,11 @@ func (a *AppServerAdapter) ListModels(ctx context.Context) ([]domain.ModelOption
 	}
 	models := make([]domain.ModelOption, 0, len(response.Data))
 	for _, item := range response.Data {
-		model := domain.ModelOption{ID: item.ID, DisplayName: item.DisplayName}
+		model := domain.ModelOption{
+			ID:               item.ID,
+			DisplayName:      item.DisplayName,
+			ReasoningOptions: make([]domain.ReasoningOption, 0, len(item.SupportedReasoningEfforts)),
+		}
 		for _, effort := range item.SupportedReasoningEfforts {
 			model.ReasoningOptions = append(model.ReasoningOptions, domain.ReasoningOption{
 				ID: effort.ReasoningEffort, DisplayName: effort.Description,

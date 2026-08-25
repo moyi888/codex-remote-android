@@ -76,15 +76,23 @@ func (s *Server) eventStream(writer http.ResponseWriter, request *http.Request) 
 			return
 		}
 		if snapshotRequired {
-			if err := wsjson.Write(request.Context(), connection, map[string]any{
-				"cursor": cursor, "type": "snapshot.required", "payload": map[string]any{},
+			if err := wsjson.Write(request.Context(), connection, domain.EventEnvelope[json.RawMessage]{
+				ProtocolVersion: domain.ProtocolVersion,
+				EventCursor:     cursor,
+				Type:            "snapshot.required",
+				Payload:         json.RawMessage(`{}`),
 			}); err != nil {
 				return
 			}
 			return
 		}
 		for _, event := range batch {
-			if err := wsjson.Write(request.Context(), connection, event); err != nil {
+			if err := wsjson.Write(request.Context(), connection, domain.EventEnvelope[json.RawMessage]{
+				ProtocolVersion: domain.ProtocolVersion,
+				EventCursor:     event.Cursor,
+				Type:            event.Type,
+				Payload:         event.Payload,
+			}); err != nil {
 				return
 			}
 			cursor = event.Cursor

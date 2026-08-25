@@ -2,7 +2,7 @@ package dev.codexremote.app.protocol
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 
 @Serializable
 enum class ThreadSource {
@@ -85,6 +85,6 @@ data class CommandEnvelope(
     val deviceId: String,
     val idempotencyKey: String,
     val type: String,
-    val payload: JsonElement,
+    val payload: JsonObject,
     val sentAt: String,
 )
