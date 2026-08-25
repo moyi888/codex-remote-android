@@ -102,6 +102,23 @@ class PairingInvitationTest {
         assertFalse(invitation.toString().contains("do-not-leak"))
     }
 
+    @Test
+    fun malformedInvitationErrorDoesNotExposeToken() {
+        val secret = "do-not-leak"
+        try {
+            PairingInvitation.parse(
+                "codex-remote://pair?baseUrl=https%3A%2F%2Fbridge.example&token=$secret%",
+            )
+            fail("malformed pairing invitation must be rejected")
+        } catch (error: IllegalArgumentException) {
+            var current: Throwable? = error
+            while (current != null) {
+                assertFalse(current.message.orEmpty().contains(secret))
+                current = current.cause
+            }
+        }
+    }
+
     private fun assertRejected(raw: String) {
         try {
             PairingInvitation.parse(raw)

@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/moyi888/codex-remote-android/bridge/internal/codex"
@@ -42,18 +43,72 @@ func TestParseServeOptionsRejectsWildcardWithoutOptIn(t *testing.T) {
 	}
 }
 
-func TestParseServeOptionsAcceptsLoopback(t *testing.T) {
-	options, err := parseServeOptions([]string{"--listen", "127.0.0.1:8787", "--fake"})
+func TestParseServeOptionsDerivesAdvertiseURLFromTailscaleListen(t *testing.T) {
+	options, err := parseServeOptions([]string{"--listen", "100.88.10.20:8787", "--fake"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !options.fake || options.listen != "127.0.0.1:8787" {
+	if options.advertiseURL != "http://100.88.10.20:8787" {
 		t.Fatalf("unexpected options: %+v", options)
 	}
 }
 
+func TestParseServeOptionsRejectsLoopbackWithoutAdvertiseURL(t *testing.T) {
+	_, err := parseServeOptions([]string{"--listen", "127.0.0.1:8787", "--fake"})
+	if err == nil || !strings.Contains(err.Error(), "--advertise-url") {
+		t.Fatalf("expected actionable advertise URL error, got %v", err)
+	}
+}
+
+func TestParseServeOptionsRejectsWildcardWithoutAdvertiseURL(t *testing.T) {
+	_, err := parseServeOptions([]string{
+		"--listen", "0.0.0.0:8787", "--allow-public-listen", "--fake",
+	})
+	if err == nil || !strings.Contains(err.Error(), "--advertise-url") {
+		t.Fatalf("expected actionable advertise URL error, got %v", err)
+	}
+}
+
+func TestParseServeOptionsAcceptsExplicitAdvertiseURLIndependentOfBind(t *testing.T) {
+	options, err := parseServeOptions([]string{
+		"--listen", "127.0.0.1:8787",
+		"--advertise-url", "https://bridge.example:9443/",
+		"--fake",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if options.listen != "127.0.0.1:8787" || options.advertiseURL != "https://bridge.example:9443" {
+		t.Fatalf("unexpected options: %+v", options)
+	}
+}
+
+func TestParseServeOptionsRejectsInvalidAdvertiseURL(t *testing.T) {
+	invalid := []string{
+		"ftp://bridge.example",
+		"https:///missing-host",
+		"https://user@bridge.example",
+		"https://bridge.example/path",
+		"https://bridge.example?mode=pair",
+		"https://bridge.example#fragment",
+		"https://bridge.example:99999",
+		"http://0.0.0.0:8787",
+		"http://[::]:8787",
+	}
+	for _, advertiseURL := range invalid {
+		t.Run(advertiseURL, func(t *testing.T) {
+			_, err := parseServeOptions([]string{
+				"--listen", "127.0.0.1:8787", "--advertise-url", advertiseURL, "--fake",
+			})
+			if err == nil {
+				t.Fatalf("expected %q to be rejected", advertiseURL)
+			}
+		})
+	}
+}
+
 func TestPairingInvitationURLPercentEncodesBaseURLAndToken(t *testing.T) {
-	got, err := pairingInvitationURL("127.0.0.1:8787", "one time/token?")
+	got, err := pairingInvitationURL("https://bridge.example:9443", "one time/token?")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,19 +119,19 @@ func TestPairingInvitationURLPercentEncodesBaseURLAndToken(t *testing.T) {
 	if parsed.Scheme != "codex-remote" || parsed.Host != "pair" {
 		t.Fatalf("unexpected pairing invitation target: %q", got)
 	}
-	if baseURL := parsed.Query().Get("baseUrl"); baseURL != "http://127.0.0.1:8787" {
+	if baseURL := parsed.Query().Get("baseUrl"); baseURL != "https://bridge.example:9443" {
 		t.Fatalf("baseUrl = %q", baseURL)
 	}
 	if token := parsed.Query().Get("token"); token != "one time/token?" {
 		t.Fatalf("token = %q", token)
 	}
-	if got == "codex-remote://pair?baseUrl=http://127.0.0.1:8787&token=one time/token?" {
+	if got == "codex-remote://pair?baseUrl=https://bridge.example:9443&token=one time/token?" {
 		t.Fatal("pairing invitation values must be percent encoded")
 	}
 }
 
 func TestPairingInvitationURLFormatsIPv6BaseURL(t *testing.T) {
-	got, err := pairingInvitationURL("[fd7a:115c:a1e0::1]:8787", "secret")
+	got, err := pairingInvitationURL("http://[fd7a:115c:a1e0::1]:8787", "secret")
 	if err != nil {
 		t.Fatal(err)
 	}
