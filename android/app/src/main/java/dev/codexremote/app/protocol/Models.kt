@@ -46,6 +46,7 @@ data class Capabilities(
 @Serializable
 data class Snapshot(
     val protocolVersion: Int,
+    val eventCursor: Long,
     val capabilities: Capabilities,
     val projects: List<ProjectOption>,
     val models: List<ModelOption>,

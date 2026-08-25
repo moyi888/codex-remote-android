@@ -32,6 +32,10 @@ func (b *Broker) Publish(eventType string, payload json.RawMessage) (Event, erro
 	return Event{Cursor: cursor, Type: eventType, Payload: payload, CreatedAt: createdAt}, nil
 }
 
+func (b *Broker) LatestCursor() (uint64, error) {
+	return b.store.LatestEventCursor()
+}
+
 func (b *Broker) After(cursor uint64, limit int) ([]Event, bool, error) {
 	records, err := b.store.EventsAfter(cursor, limit)
 	if err != nil {

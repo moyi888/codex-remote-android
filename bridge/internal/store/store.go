@@ -125,6 +125,14 @@ func (s *Store) AppendEvent(eventType string, payload json.RawMessage, createdAt
 	return uint64(id), err
 }
 
+func (s *Store) LatestEventCursor() (uint64, error) {
+	var cursor int64
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(cursor), 0) FROM events`).Scan(&cursor); err != nil {
+		return 0, err
+	}
+	return uint64(cursor), nil
+}
+
 func (s *Store) EventsAfter(cursor uint64, limit int) ([]EventRecord, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
