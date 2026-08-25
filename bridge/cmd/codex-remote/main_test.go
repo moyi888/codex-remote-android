@@ -53,10 +53,13 @@ func TestParseServeOptionsDerivesAdvertiseURLFromTailscaleListen(t *testing.T) {
 	}
 }
 
-func TestParseServeOptionsRejectsLoopbackWithoutAdvertiseURL(t *testing.T) {
-	_, err := parseServeOptions([]string{"--listen", "127.0.0.1:8787", "--fake"})
-	if err == nil || !strings.Contains(err.Error(), "--advertise-url") {
-		t.Fatalf("expected actionable advertise URL error, got %v", err)
+func TestParseServeOptionsPreservesDefaultLoopbackStartup(t *testing.T) {
+	options, err := parseServeOptions([]string{"--fake"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if options.listen != "127.0.0.1:8787" || options.advertiseURL != "" || !options.fake {
+		t.Fatalf("unexpected default options: %+v", options)
 	}
 }
 
@@ -92,6 +95,12 @@ func TestParseServeOptionsRejectsInvalidAdvertiseURL(t *testing.T) {
 		"https://bridge.example?mode=pair",
 		"https://bridge.example#fragment",
 		"https://bridge.example:99999",
+		"https://under_score.example",
+		"https://例子.example",
+		"https://-leading.example",
+		"https://trailing-.example",
+		"https://" + strings.Repeat("a", 64) + ".example",
+		"https://" + strings.Repeat("a.", 126) + "aa",
 		"http://0.0.0.0:8787",
 		"http://[::]:8787",
 	}
@@ -104,6 +113,43 @@ func TestParseServeOptionsRejectsInvalidAdvertiseURL(t *testing.T) {
 				t.Fatalf("expected %q to be rejected", advertiseURL)
 			}
 		})
+	}
+}
+
+func TestParseServeOptionsAcceptsPunycodeAdvertiseHost(t *testing.T) {
+	options, err := parseServeOptions([]string{
+		"--listen", "127.0.0.1:8787",
+		"--advertise-url", "https://xn--bcher-kva.example/",
+		"--fake",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if options.advertiseURL != "https://xn--bcher-kva.example" {
+		t.Fatalf("advertise URL = %q", options.advertiseURL)
+	}
+}
+
+func TestPairingOutputWithoutAdvertiseURLKeepsTokenAndExplainsMissingLink(t *testing.T) {
+	got, err := pairingOutput("", "one-time-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "One-time pairing token (expires in 5 minutes): one-time-secret\n" +
+		"Pairing link unavailable; set --advertise-url to a phone-reachable origin.\n"
+	if got != want {
+		t.Fatalf("pairingOutput() = %q, want %q", got, want)
+	}
+}
+
+func TestPairingOutputWithAdvertiseURLIncludesLink(t *testing.T) {
+	got, err := pairingOutput("https://bridge.example", "one-time-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "One-time pairing token (expires in 5 minutes): one-time-secret\n") ||
+		!strings.Contains(got, "Pairing link: codex-remote://pair?") {
+		t.Fatalf("unexpected pairing output: %q", got)
 	}
 }
 
