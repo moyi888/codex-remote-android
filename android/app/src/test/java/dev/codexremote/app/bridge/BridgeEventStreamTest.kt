@@ -10,11 +10,14 @@ import java.util.concurrent.TimeUnit
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okio.ByteString
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -84,6 +87,65 @@ class BridgeEventStreamTest {
                 assertEquals("baseUrl must be an HTTP(S) origin", expected.message)
             }
         }
+    }
+
+    @Test
+    fun staleClosingCallbacksDuringReconnectCannotDisconnectOrCloseNewConnection() {
+        val factory = ControlledWebSocketFactory()
+        val listener = RecordingListener()
+        val stream = newControlledStream(factory = factory, listener = listener)
+
+        stream.connect()
+        val first = factory.connections.single()
+        first.open()
+        stream.close()
+        factory.beforeReturn = { connectionIndex ->
+            if (connectionIndex == 1) {
+                first.closing()
+                first.closed()
+            }
+        }
+
+        stream.connect()
+        val second = factory.connections[1]
+        second.open()
+
+        assertEquals(EventStreamState.CONNECTED, listener.states.last())
+        assertEquals(0, second.webSocket.closeCalls)
+        assertEquals(0, second.webSocket.cancelCalls)
+    }
+
+    @Test
+    fun staleMessagesCannotDeliverAdvanceCursorOrRefreshSnapshot() {
+        val factory = ControlledWebSocketFactory()
+        val cursorStore = InMemoryCursorStore()
+        val snapshotLoader = RecordingSnapshotLoader(snapshot(9))
+        val listener = RecordingListener()
+        val stream = newControlledStream(
+            factory = factory,
+            cursorStore = cursorStore,
+            snapshotLoader = snapshotLoader,
+            listener = listener,
+        )
+
+        stream.connect()
+        val first = factory.connections.single()
+        first.open()
+        stream.close()
+        stream.connect()
+        factory.connections[1].open()
+
+        first.message(event(1, "thread.updated"))
+        first.message(event(3, "thread.updated"))
+        first.message(event(0, "snapshot.required"))
+
+        assertTrue(listener.events.isEmpty())
+        assertTrue(listener.snapshots.isEmpty())
+        assertTrue(listener.failures.isEmpty())
+        assertEquals(0L, cursorStore.load())
+        assertTrue(cursorStore.saved.isEmpty())
+        assertEquals(0, snapshotLoader.calls)
+        assertEquals(EventStreamState.CONNECTED, listener.states.last())
     }
 
     @Test
@@ -241,6 +303,20 @@ class BridgeEventStreamTest {
         okHttpClient = httpClient,
     )
 
+    private fun newControlledStream(
+        factory: WebSocket.Factory,
+        cursorStore: CursorStore = InMemoryCursorStore(),
+        snapshotLoader: SnapshotLoader = RecordingSnapshotLoader(snapshot(0)),
+        listener: EventStreamListener,
+    ): BridgeEventStream = BridgeEventStream(
+        baseUrl = server.url("/").toString().removeSuffix("/"),
+        credential = DeviceCredential(1, "phone-1", "credential-do-not-leak"),
+        cursorStore = cursorStore,
+        snapshotLoader = snapshotLoader,
+        listener = listener,
+        webSocketFactory = factory,
+    )
+
     private fun webSocketResponse(
         messages: List<String> = emptyList(),
         onOpen: () -> Unit = {},
@@ -335,6 +411,71 @@ class BridgeEventStreamTest {
         override fun onFailure(error: Throwable) {
             failures += error
             failed.countDown()
+        }
+    }
+
+    private class ControlledWebSocketFactory : WebSocket.Factory {
+        val connections = mutableListOf<ControlledConnection>()
+        var beforeReturn: ((connectionIndex: Int) -> Unit)? = null
+
+        override fun newWebSocket(request: Request, listener: WebSocketListener): WebSocket {
+            val connection = ControlledConnection(request, listener)
+            connections += connection
+            beforeReturn?.invoke(connections.lastIndex)
+            return connection.webSocket
+        }
+    }
+
+    private class ControlledConnection(
+        request: Request,
+        private val listener: WebSocketListener,
+    ) {
+        val webSocket = ControlledWebSocket(request)
+
+        fun open() {
+            listener.onOpen(
+                webSocket,
+                Response.Builder()
+                    .request(webSocket.request())
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(101)
+                    .message("Switching Protocols")
+                    .build(),
+            )
+        }
+
+        fun message(text: String) {
+            listener.onMessage(webSocket, text)
+        }
+
+        fun closing() {
+            listener.onClosing(webSocket, 1000, "old connection closing")
+        }
+
+        fun closed() {
+            listener.onClosed(webSocket, 1000, "old connection closed")
+        }
+    }
+
+    private class ControlledWebSocket(private val originalRequest: Request) : WebSocket {
+        var closeCalls = 0
+        var cancelCalls = 0
+
+        override fun request(): Request = originalRequest
+
+        override fun queueSize(): Long = 0
+
+        override fun send(text: String): Boolean = true
+
+        override fun send(bytes: ByteString): Boolean = true
+
+        override fun close(code: Int, reason: String?): Boolean {
+            closeCalls += 1
+            return true
+        }
+
+        override fun cancel() {
+            cancelCalls += 1
         }
     }
 
