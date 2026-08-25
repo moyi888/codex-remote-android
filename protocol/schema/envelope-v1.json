@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/moyi888/codex-remote-android/protocol/schema/envelope-v1.json",
+  "title": "Codex Remote event envelope v1",
+  "type": "object",
+  "required": ["protocolVersion", "eventCursor", "type", "payload"],
+  "properties": {
+    "protocolVersion": { "const": 1 },
+    "eventCursor": { "type": "integer", "minimum": 0 },
+    "type": { "type": "string", "minLength": 1 },
+    "payload": { "type": "object" }
+  },
+  "additionalProperties": false
+}

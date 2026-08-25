@@ -1,0 +1,89 @@
+package auth
+
+import (
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
+	"encoding/hex"
+	"fmt"
+	"time"
+
+	"github.com/moyi888/codex-remote-android/bridge/internal/store"
+)
+
+type PairingService struct {
+	store *store.Store
+	now   func() time.Time
+}
+
+func NewPairingService(store *store.Store, now func() time.Time) *PairingService {
+	return &PairingService{store: store, now: now}
+}
+
+func (s *PairingService) Issue(ttl time.Duration) (string, error) {
+	if ttl <= 0 {
+		return "", fmt.Errorf("pairing token ttl must be positive")
+	}
+	token, err := randomToken()
+	if err != nil {
+		return "", err
+	}
+	if err := s.store.CreatePairingToken(hash(token), s.now().Add(ttl)); err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
+func (s *PairingService) Exchange(token, deviceID, deviceName string) (string, error) {
+	if token == "" || deviceID == "" || deviceName == "" {
+		return "", fmt.Errorf("token, device id and device name are required")
+	}
+	consumed, err := s.store.ConsumePairingToken(hash(token), s.now())
+	if err != nil {
+		return "", err
+	}
+	if !consumed {
+		return "", fmt.Errorf("pairing token is invalid, expired or already consumed")
+	}
+	credential, err := randomToken()
+	if err != nil {
+		return "", err
+	}
+	if err := s.store.CreateDevice(deviceID, deviceName, hash(credential)); err != nil {
+		return "", err
+	}
+	return credential, nil
+}
+
+func (s *PairingService) Authenticate(deviceID, credential string) (bool, error) {
+	device, err := s.store.Device(deviceID)
+	if err != nil {
+		if err == store.ErrNotFound {
+			return false, nil
+		}
+		return false, err
+	}
+	if device.Revoked {
+		return false, nil
+	}
+	want, err := hex.DecodeString(device.CredentialHash)
+	if err != nil {
+		return false, fmt.Errorf("invalid stored credential hash: %w", err)
+	}
+	gotSum := sha256.Sum256([]byte(credential))
+	return subtle.ConstantTimeCompare(want, gotSum[:]) == 1, nil
+}
+
+func randomToken() (string, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+func hash(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
+}

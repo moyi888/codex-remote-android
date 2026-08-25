@@ -1,0 +1,58 @@
+package codex
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"testing"
+)
+
+type recordedCall struct {
+	method string
+	params any
+}
+
+type recordingRPC struct{ calls []recordedCall }
+
+func (r *recordingRPC) Call(_ context.Context, method string, params, result any) error {
+	r.calls = append(r.calls, recordedCall{method: method, params: params})
+	switch method {
+	case "thread/start":
+		return json.Unmarshal([]byte(`{"thread":{"id":"thread-real-1","preview":""},"model":"gpt-test","modelProvider":"openai","cwd":"D:\\\\code","approvalPolicy":"never","approvalsReviewer":null,"sandbox":{"type":"dangerFullAccess"}}`), result)
+	case "turn/start":
+		return json.Unmarshal([]byte(`{"turn":{"id":"turn-1","status":"inProgress","items":[]}}`), result)
+	case "model/list":
+		return json.Unmarshal([]byte(`{"data":[{"id":"gpt-test","displayName":"Test Model","supportedReasoningEfforts":[{"reasoningEffort":"high","description":"High"}]}],"nextCursor":null}`), result)
+	default:
+		return fmt.Errorf("unexpected method %s", method)
+	}
+}
+
+func TestAppServerAdapterStartsThreadThenTurn(t *testing.T) {
+	rpc := &recordingRPC{}
+	adapter := NewAppServerAdapter(rpc, []Project{{ID: "project-1", DisplayName: "Code", Path: `D:\code`}})
+	thread, err := adapter.StartTask(context.Background(), StartTaskRequest{
+		ProjectID: "project-1", Prompt: "检查状态", Model: "gpt-test", Reasoning: "high",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if thread.ID != "thread-real-1" || len(rpc.calls) != 2 {
+		t.Fatalf("thread=%+v calls=%+v", thread, rpc.calls)
+	}
+	if rpc.calls[0].method != "thread/start" || rpc.calls[1].method != "turn/start" {
+		t.Fatalf("unexpected method order: %+v", rpc.calls)
+	}
+}
+
+func TestAppServerAdapterMapsModels(t *testing.T) {
+	rpc := &recordingRPC{}
+	adapter := NewAppServerAdapter(rpc, nil)
+	models, err := adapter.ListModels(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 1 || models[0].ID != "gpt-test" || models[0].ReasoningOptions[0].ID != "high" {
+		t.Fatalf("unexpected models: %+v", models)
+	}
+}

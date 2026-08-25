@@ -1,0 +1,13 @@
+.env
+.idea/
+.mise.local.toml
+.superpowers/
+docs/
+**/.gradle/
+**/build/
+android/local.properties
+bridge/codex-remote.exe
+bridge/data/
+*.db
+*.db-shm
+*.db-wal

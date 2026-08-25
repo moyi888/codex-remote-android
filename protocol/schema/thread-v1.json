@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Codex Remote thread summary v1",
+  "type": "object",
+  "required": ["id", "title", "projectId", "projectName", "source", "state", "updatedAt"],
+  "properties": {
+    "id": { "type": "string" },
+    "title": { "type": "string" },
+    "projectId": { "type": "string" },
+    "projectName": { "type": "string" },
+    "source": { "enum": ["desktop", "app_server"] },
+    "state": { "enum": ["idle", "running", "completed", "failed", "disconnected"] },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "attention": {
+      "type": ["object", "null"],
+      "properties": {
+        "category": { "type": "string" },
+        "site": { "type": "string" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "detectedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["category", "confidence", "detectedAt"]
+    }
+  }
+}
