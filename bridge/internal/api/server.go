@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -57,7 +58,7 @@ func (s *Server) eventStream(writer http.ResponseWriter, request *http.Request) 
 		return
 	}
 	cursor, err := strconv.ParseUint(request.URL.Query().Get("cursor"), 10, 64)
-	if err != nil {
+	if err != nil || cursor > math.MaxInt64 {
 		writeError(writer, http.StatusBadRequest, "invalid event cursor")
 		return
 	}

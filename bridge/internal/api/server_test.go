@@ -137,6 +137,37 @@ func TestEventWebSocketReplaysFromCursor(t *testing.T) {
 	}
 }
 
+func TestEventStreamRejectsCursorAboveProtocolMaximum(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "bridge.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	pairing := auth.NewPairingService(db, time.Now)
+	token, err := pairing.Issue(5 * time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	broker := events.NewBroker(db, time.Now)
+	server := httptest.NewServer(NewServer(pairing, codex.NewFakeAdapter(), WithEvents(broker)).Handler())
+	defer server.Close()
+	credential := exchangeCredential(t, server.URL, token)
+
+	header := http.Header{}
+	header.Set("Authorization", "Device phone-1:"+credential)
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/v1/events?cursor=9223372036854775808"
+	connection, response, err := websocket.Dial(t.Context(), wsURL, &websocket.DialOptions{HTTPHeader: header})
+	if connection != nil {
+		connection.CloseNow()
+	}
+	if err == nil {
+		t.Fatal("cursor above protocol maximum unexpectedly completed WebSocket upgrade")
+	}
+	if response == nil || response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("response = %+v, want HTTP %d", response, http.StatusBadRequest)
+	}
+}
+
 func TestCommandEndpointStartsTaskOnce(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "bridge.db"))
 	if err != nil {
