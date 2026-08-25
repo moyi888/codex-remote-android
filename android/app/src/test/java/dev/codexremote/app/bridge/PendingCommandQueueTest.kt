@@ -94,12 +94,12 @@ class PendingCommandQueueTest {
         queue.enqueue(command("first", "phone-1", "one"))
         queue.enqueue(command("second", "phone-1", "two"))
 
-        queue.markAttempt("first", "2026-08-25T12:01:00Z")
+        queue.markAttempt("phone-1", "first", "2026-08-25T12:01:00Z")
 
         assertEquals(1, queue.peek()?.attempts)
         assertEquals("2026-08-25T12:01:00Z", queue.peek()?.lastAttemptAt)
 
-        queue.removeCompleted("first")
+        queue.removeCompleted("phone-1", "first")
 
         assertEquals("second", queue.peek()?.command?.idempotencyKey)
         assertEquals(0, queue.peek()?.attempts)

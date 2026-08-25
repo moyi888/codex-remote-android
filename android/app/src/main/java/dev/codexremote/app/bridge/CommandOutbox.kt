@@ -31,7 +31,10 @@ class CommandOutbox(
         }
         return try {
             val response = send(queued.command)
-            queue.removeCompleted(queued.command.idempotencyKey)
+            queue.removeCompleted(
+                queued.command.deviceId,
+                queued.command.idempotencyKey,
+            )
             CommandOutboxResult.Sent(queued, response)
         } catch (error: BridgeApiException) {
             retainAfterFailure(queued, error)
@@ -42,12 +45,22 @@ class CommandOutbox(
 
     fun flush(): List<CommandOutboxResult> {
         val results = mutableListOf<CommandOutboxResult>()
-        for (queued in queue.list()) {
-            queue.markAttempt(queued.command.idempotencyKey, clock())
+        val commands = queue.list().filter {
+            it.command.deviceId == connection.credential.deviceId
+        }
+        for (queued in commands) {
+            queue.markAttempt(
+                queued.command.deviceId,
+                queued.command.idempotencyKey,
+                clock(),
+            )
             val attempted = current(queued)
             val result = try {
                 val response = send(attempted.command)
-                queue.removeCompleted(attempted.command.idempotencyKey)
+                queue.removeCompleted(
+                    attempted.command.deviceId,
+                    attempted.command.idempotencyKey,
+                )
                 CommandOutboxResult.Sent(attempted, response)
             } catch (error: BridgeApiException) {
                 CommandOutboxResult.Queued(attempted, error)
@@ -72,7 +85,11 @@ class CommandOutbox(
         queued: QueuedCommand,
         error: Exception,
     ): CommandOutboxResult.Queued {
-        queue.markAttempt(queued.command.idempotencyKey, clock())
+        queue.markAttempt(
+            queued.command.deviceId,
+            queued.command.idempotencyKey,
+            clock(),
+        )
         return CommandOutboxResult.Queued(current(queued), error)
     }
 

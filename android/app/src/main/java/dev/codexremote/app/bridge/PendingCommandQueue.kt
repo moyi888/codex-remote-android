@@ -27,7 +27,7 @@ class PendingCommandQueue(
 ) {
     fun enqueue(command: CommandEnvelope): Boolean = synchronized(QUEUE_LOCK) {
         val commands = readQueue().toMutableList()
-        if (commands.any { queued -> queued.command.deviceId == command.deviceId && queued.command.idempotencyKey == command.idempotencyKey }) {
+        if (commands.any { queued -> queued.matches(command.deviceId, command.idempotencyKey) }) {
             return@synchronized false
         }
         check(commands.size < MAX_COMMANDS) { "Pending command queue is full" }
@@ -40,9 +40,13 @@ class PendingCommandQueue(
         readQueue().firstOrNull()
     }
 
-    fun markAttempt(idempotencyKey: String, at: String) = synchronized(QUEUE_LOCK) {
+    fun markAttempt(
+        deviceId: String,
+        idempotencyKey: String,
+        at: String,
+    ) = synchronized(QUEUE_LOCK) {
         val commands = readQueue().toMutableList()
-        val index = commands.indexOfFirst { it.command.idempotencyKey == idempotencyKey }
+        val index = commands.indexOfFirst { it.matches(deviceId, idempotencyKey) }
         if (index >= 0) {
             val queued = commands[index]
             commands[index] = queued.copy(
@@ -53,9 +57,12 @@ class PendingCommandQueue(
         }
     }
 
-    fun removeCompleted(idempotencyKey: String) = synchronized(QUEUE_LOCK) {
+    fun removeCompleted(
+        deviceId: String,
+        idempotencyKey: String,
+    ) = synchronized(QUEUE_LOCK) {
         val commands = readQueue().toMutableList()
-        val index = commands.indexOfFirst { it.command.idempotencyKey == idempotencyKey }
+        val index = commands.indexOfFirst { it.matches(deviceId, idempotencyKey) }
         if (index >= 0) {
             commands.removeAt(index)
             writeQueue(commands)
@@ -65,6 +72,9 @@ class PendingCommandQueue(
     fun list(): List<QueuedCommand> = synchronized(QUEUE_LOCK) {
         readQueue().toList()
     }
+
+    private fun QueuedCommand.matches(deviceId: String, idempotencyKey: String): Boolean =
+        command.deviceId == deviceId && command.idempotencyKey == idempotencyKey
 
     private fun readQueue(): List<QueuedCommand> {
         val encrypted = try {
