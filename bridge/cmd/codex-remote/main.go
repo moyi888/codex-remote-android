@@ -62,7 +62,13 @@ func normalizeAdvertiseURL(listenAddress, explicit string) (string, error) {
 			return "", fmt.Errorf("invalid listen address: %w", err)
 		}
 		ip, err := netip.ParseAddr(host)
-		if err != nil || ip.IsLoopback() || ip.IsUnspecified() {
+		if err != nil {
+			return "", fmt.Errorf("listen host must be an IP address")
+		}
+		if ip.IsLoopback() {
+			return "", nil
+		}
+		if ip.IsUnspecified() {
 			return "", fmt.Errorf("listen address is not client-reachable; provide --advertise-url")
 		}
 		return (&url.URL{Scheme: "http", Host: listenAddress}).String(), nil
@@ -74,6 +80,9 @@ func normalizeAdvertiseURL(listenAddress, explicit string) (string, error) {
 	}
 	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" {
 		return "", fmt.Errorf("advertise URL must be an HTTP(S) origin with a host")
+	}
+	if !validAdvertiseHost(parsed.Hostname()) {
+		return "", fmt.Errorf("advertise URL host must be an IP address or valid ASCII DNS name")
 	}
 	if parsed.User != nil || (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.ForceQuery || strings.Contains(explicit, "#") {
 		return "", fmt.Errorf("advertise URL must be a pure origin")
@@ -93,6 +102,28 @@ func normalizeAdvertiseURL(listenAddress, explicit string) (string, error) {
 	parsed.Path = ""
 	parsed.RawPath = ""
 	return parsed.String(), nil
+}
+
+func validAdvertiseHost(host string) bool {
+	if _, err := netip.ParseAddr(host); err == nil {
+		return true
+	}
+	if len(host) == 0 || len(host) > 253 {
+		return false
+	}
+	for _, label := range strings.Split(host, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, character := range label {
+			if (character < 'a' || character > 'z') &&
+				(character < 'A' || character > 'Z') &&
+				(character < '0' || character > '9') && character != '-' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 type bridgeRuntime struct {
@@ -129,6 +160,18 @@ func pairingInvitationURL(advertiseBaseURL, token string) (string, error) {
 	return invitation.String(), nil
 }
 
+func pairingOutput(advertiseURL, token string) (string, error) {
+	output := fmt.Sprintf("One-time pairing token (expires in 5 minutes): %s\n", token)
+	if advertiseURL == "" {
+		return output + "Pairing link unavailable; set --advertise-url to a phone-reachable origin.\n", nil
+	}
+	link, err := pairingInvitationURL(advertiseURL, token)
+	if err != nil {
+		return "", err
+	}
+	return output + fmt.Sprintf("Pairing link: %s\n", link), nil
+}
+
 func runServe(options serveOptions) error {
 	if err := os.MkdirAll(filepath.Dir(options.data), 0o700); err != nil {
 		return err
@@ -144,7 +187,7 @@ func runServe(options serveOptions) error {
 		return err
 	}
 	defer runtime.Close()
-	pairingLink, err := pairingInvitationURL(options.advertiseURL, runtime.pairingToken)
+	pairingDetails, err := pairingOutput(options.advertiseURL, runtime.pairingToken)
 	if err != nil {
 		return err
 	}
@@ -163,8 +206,7 @@ func runServe(options serveOptions) error {
 	}()
 
 	fmt.Printf("Bridge listening on http://%s\n", options.listen)
-	fmt.Printf("One-time pairing token (expires in 5 minutes): %s\n", runtime.pairingToken)
-	fmt.Printf("Pairing link: %s\n", pairingLink)
+	fmt.Print(pairingDetails)
 	err = server.ListenAndServe()
 	if err == http.ErrServerClosed {
 		return nil
