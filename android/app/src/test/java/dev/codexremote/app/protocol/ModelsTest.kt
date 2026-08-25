@@ -3,11 +3,24 @@ package dev.codexremote.app.protocol
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.fail
 import org.junit.Assert.assertNotNull
 import org.junit.Test
 
 class ModelsTest {
+    @Test
+    fun storedConnectionToStringDoesNotExposeCredential() {
+        val secret = "credential-do-not-leak"
+
+        val rendered = StoredBridgeConnection(
+            baseUrl = "https://bridge.example",
+            credential = DeviceCredential(1, "phone-1", secret),
+        ).toString()
+
+        assertFalse(rendered.contains(secret))
+    }
+
     @Test
     fun decodesThreadSnapshotFixture() {
         val raw = """
