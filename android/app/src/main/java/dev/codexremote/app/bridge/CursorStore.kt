@@ -3,7 +3,8 @@ package dev.codexremote.app.bridge
 import android.content.Context
 import android.content.SharedPreferences
 
-interface CursorStore {
+/** Runs on the stream event thread; implementations must not wait for another thread calling the stream. */
+internal interface CursorStore {
     fun load(): Long
 
     fun save(cursor: Long)
@@ -11,7 +12,7 @@ interface CursorStore {
     fun clear()
 }
 
-class SharedPreferencesCursorStore(context: Context) : CursorStore {
+internal class SharedPreferencesCursorStore(context: Context) : CursorStore {
     private val preferences: SharedPreferences = context.applicationContext.getSharedPreferences(
         PREFERENCES_NAME,
         Context.MODE_PRIVATE,

@@ -6,14 +6,15 @@ import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.atomic.AtomicReference
 
 internal interface EventLoop {
-    fun dispatch(task: () -> Unit)
+    fun dispatch(task: () -> Unit): Boolean
 
-    fun <T> runSync(task: () -> T): T
+    fun runSyncIfOpen(task: () -> Unit): Boolean
 
     fun shutdown()
 }
 
 internal class SingleThreadEventLoop : EventLoop {
+    private val acceptanceLock = Any()
     private val loopThread = AtomicReference<Thread?>()
     private val executor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, THREAD_NAME).apply {
@@ -22,18 +23,36 @@ internal class SingleThreadEventLoop : EventLoop {
         }
     }
 
-    override fun dispatch(task: () -> Unit) {
+    private var accepting = true
+
+    override fun dispatch(task: () -> Unit): Boolean = synchronized(acceptanceLock) {
+        if (!accepting) return@synchronized false
         try {
             executor.execute { task() }
+            true
         } catch (_: RejectedExecutionException) {
-            // Callbacks racing with dispose are intentionally discarded.
+            false
         }
     }
 
-    override fun <T> runSync(task: () -> T): T {
-        if (Thread.currentThread() === loopThread.get()) return task()
+    override fun runSyncIfOpen(task: () -> Unit): Boolean {
+        if (Thread.currentThread() === loopThread.get()) {
+            val open = synchronized(acceptanceLock) { accepting }
+            if (!open) return false
+            task()
+            return true
+        }
+        val future = synchronized(acceptanceLock) {
+            if (!accepting) return false
+            try {
+                executor.submit { task() }
+            } catch (_: RejectedExecutionException) {
+                return false
+            }
+        }
         try {
-            return executor.submit<T> { task() }.get()
+            future.get()
+            return true
         } catch (error: ExecutionException) {
             val cause = error.cause
             when (cause) {
@@ -48,7 +67,11 @@ internal class SingleThreadEventLoop : EventLoop {
     }
 
     override fun shutdown() {
-        executor.shutdown()
+        synchronized(acceptanceLock) {
+            if (!accepting) return
+            accepting = false
+            executor.shutdown()
+        }
     }
 
     private companion object {

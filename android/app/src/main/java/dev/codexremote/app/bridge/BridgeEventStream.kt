@@ -13,17 +13,19 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 
-enum class EventStreamState {
+internal enum class EventStreamState {
     CONNECTING,
     CONNECTED,
     DISCONNECTED,
 }
 
-fun interface SnapshotLoader {
+/** Runs on the stream event thread; must not wait for another thread calling the stream. */
+internal fun interface SnapshotLoader {
     fun load(): Snapshot
 }
 
-interface EventStreamListener {
+/** Callbacks run serially on the stream event thread; same-thread close/connect calls are supported. */
+internal interface EventStreamListener {
     fun onStateChanged(state: EventStreamState)
 
     fun onEvent(envelope: EventEnvelope<JsonObject>)
@@ -33,11 +35,11 @@ interface EventStreamListener {
     fun onFailure(error: Throwable)
 }
 
-class BridgeEventStreamException(message: String) : RuntimeException(message) {
+internal class BridgeEventStreamException(message: String) : RuntimeException(message) {
     override fun toString(): String = "BridgeEventStreamException(message=$message)"
 }
 
-class BridgeEventStream internal constructor(
+internal class BridgeEventStream internal constructor(
     private val baseUrl: String,
     private val credential: DeviceCredential,
     private val cursorStore: CursorStore,
@@ -69,7 +71,6 @@ class BridgeEventStream internal constructor(
         json = json,
     )
 
-    @Volatile
     private var disposed = false
 
     private var activeGeneration = 0L
@@ -78,18 +79,17 @@ class BridgeEventStream internal constructor(
     private var currentCursor = 0L
 
     fun connect() {
-        check(!disposed) { "Bridge event stream has been disposed" }
-        eventLoop.runSync(::connectOnLoop)
+        check(eventLoop.runSyncIfOpen(::connectOnLoop)) { DISPOSED_MESSAGE }
     }
 
     fun close() {
-        if (disposed) return
-        eventLoop.runSync(::closeOnLoop)
+        eventLoop.runSyncIfOpen {
+            if (!disposed) closeOnLoop()
+        }
     }
 
     fun dispose() {
-        if (disposed) return
-        eventLoop.runSync {
+        eventLoop.runSyncIfOpen {
             if (!disposed) {
                 disposed = true
                 closeOnLoop()
@@ -99,14 +99,20 @@ class BridgeEventStream internal constructor(
     }
 
     private fun connectOnLoop() {
-        check(!disposed) { "Bridge event stream has been disposed" }
+        check(!disposed) { DISPOSED_MESSAGE }
         if (currentSocket != null || state != EventStreamState.DISCONNECTED) return
 
-        currentCursor = cursorStore.load().also {
-            require(it >= 0) { "Event cursor must be non-negative" }
-        }
         activeGeneration += 1
         val generation = activeGeneration
+        val loadedCursor = try {
+            cursorStore.load()
+        } catch (_: Exception) {
+            if (!isActive(generation)) return
+            throw IllegalStateException("Unable to load event cursor")
+        }
+        if (!isActive(generation)) return
+        require(loadedCursor >= 0) { "Event cursor must be non-negative" }
+        currentCursor = loadedCursor
         val request = Request.Builder()
             .url(eventEndpoint(baseUrl, currentCursor))
             .header(
@@ -207,10 +213,12 @@ class BridgeEventStream internal constructor(
         if (!isActive(generation)) return
         try {
             cursorStore.save(envelope.eventCursor)
-            currentCursor = envelope.eventCursor
         } catch (_: Exception) {
             failAndTerminate(generation, webSocket, "Unable to persist event cursor")
+            return
         }
+        if (!isActive(generation)) return
+        currentCursor = envelope.eventCursor
     }
 
     private fun refreshSnapshotAndTerminate(generation: Long, webSocket: WebSocket) {
@@ -221,6 +229,7 @@ class BridgeEventStream internal constructor(
             failAndTerminate(generation, webSocket, "Unable to refresh bridge snapshot")
             return
         }
+        if (!isActive(generation)) return
         if (snapshot.protocolVersion != PROTOCOL_VERSION || snapshot.eventCursor < 0) {
             failAndTerminate(generation, webSocket, "Unable to refresh bridge snapshot")
             return
@@ -234,11 +243,12 @@ class BridgeEventStream internal constructor(
         if (!isActive(generation)) return
         try {
             cursorStore.save(snapshot.eventCursor)
-            currentCursor = snapshot.eventCursor
         } catch (_: Exception) {
             failAndTerminate(generation, webSocket, "Unable to persist snapshot cursor")
             return
         }
+        if (!isActive(generation)) return
+        currentCursor = snapshot.eventCursor
         terminate(generation, webSocket)
     }
 
@@ -317,6 +327,7 @@ class BridgeEventStream internal constructor(
 
     private companion object {
         const val PROTOCOL_VERSION = 1
+        const val DISPOSED_MESSAGE = "Bridge event stream has been disposed"
         const val SNAPSHOT_REQUIRED_TYPE = "snapshot.required"
         const val INVALID_EVENT_MESSAGE = "Bridge event stream received an invalid event"
         const val NORMAL_CLOSURE = 1000
