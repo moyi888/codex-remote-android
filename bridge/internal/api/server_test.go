@@ -109,12 +109,31 @@ func TestEventWebSocketReplaysFromCursor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var event events.Event
+	var event domain.EventEnvelope[json.RawMessage]
 	if err := json.Unmarshal(payload, &event); err != nil {
 		t.Fatal(err)
 	}
-	if event.Cursor != 1 || event.Type != "thread.updated" {
+	if event.ProtocolVersion != domain.ProtocolVersion || event.EventCursor != 1 || event.Type != "thread.updated" {
 		t.Fatalf("unexpected event: %+v", event)
+	}
+	var eventPayload struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(event.Payload, &eventPayload); err != nil {
+		t.Fatal(err)
+	}
+	if eventPayload.ID != "thread-1" {
+		t.Fatalf("unexpected event payload: %+v", eventPayload)
+	}
+	var wireFields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &wireFields); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := wireFields["cursor"]; exists {
+		t.Fatalf("internal cursor leaked into wire event: %s", payload)
+	}
+	if _, exists := wireFields["createdAt"]; exists {
+		t.Fatalf("internal createdAt leaked into wire event: %s", payload)
 	}
 }
 

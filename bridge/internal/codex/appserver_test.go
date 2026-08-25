@@ -56,3 +56,33 @@ func TestAppServerAdapterMapsModels(t *testing.T) {
 		t.Fatalf("unexpected models: %+v", models)
 	}
 }
+
+type modelWithoutReasoningRPC struct{}
+
+func (modelWithoutReasoningRPC) Call(_ context.Context, method string, _, result any) error {
+	if method != "model/list" {
+		return fmt.Errorf("unexpected method %s", method)
+	}
+	return json.Unmarshal([]byte(`{"data":[{"id":"gpt-basic","displayName":"Basic"}],"nextCursor":null}`), result)
+}
+
+func TestAppServerAdapterMapsMissingReasoningOptionsToEmptyArray(t *testing.T) {
+	adapter := NewAppServerAdapter(modelWithoutReasoningRPC{}, nil)
+	models, err := adapter.ListModels(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(models[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var model struct {
+		ReasoningOptions json.RawMessage `json:"reasoningOptions"`
+	}
+	if err := json.Unmarshal(encoded, &model); err != nil {
+		t.Fatal(err)
+	}
+	if string(model.ReasoningOptions) != "[]" {
+		t.Fatalf("reasoningOptions = %s, want []", model.ReasoningOptions)
+	}
+}

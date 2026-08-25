@@ -1,7 +1,9 @@
 package dev.codexremote.app.protocol
 
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
+import org.junit.Assert.fail
 import org.junit.Assert.assertNotNull
 import org.junit.Test
 
@@ -39,5 +41,27 @@ class ModelsTest {
         assertEquals(ThreadState.RUNNING, envelope.payload.state)
         assertNotNull(envelope.payload.attention)
         assertEquals("github.com", envelope.payload.attention?.site)
+    }
+
+    @Test
+    fun rejectsPrimitiveCommandPayload() {
+        val raw = """
+            {
+              "protocolVersion": 1,
+              "requestId": "request-1",
+              "deviceId": "phone-1",
+              "idempotencyKey": "start-1",
+              "type": "task.start",
+              "payload": "not-an-object",
+              "sentAt": "2026-08-25T12:00:00Z"
+            }
+        """.trimIndent()
+
+        try {
+            Json.decodeFromString<CommandEnvelope>(raw)
+            fail("primitive command payload must be rejected")
+        } catch (_: SerializationException) {
+            // Expected: the command wire contract only accepts JSON objects.
+        }
     }
 }
