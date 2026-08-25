@@ -72,6 +72,22 @@ func StartRPCProcess(ctx context.Context, command string, args, environment []st
 
 func (p *RPCProcess) Notifications() <-chan Notification { return p.notify }
 
+func (p *RPCProcess) Notify(_ context.Context, method string, params any) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	message := struct {
+		JSONRPC string `json:"jsonrpc"`
+		Method  string `json:"method"`
+		Params  any    `json:"params,omitempty"`
+	}{JSONRPC: "2.0", Method: method, Params: params}
+	encoded, err := json.Marshal(message)
+	if err != nil {
+		return err
+	}
+	_, err = p.stdin.Write(append(encoded, '\n'))
+	return err
+}
+
 func (p *RPCProcess) Call(ctx context.Context, method string, params, result any) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
