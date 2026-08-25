@@ -138,6 +138,15 @@ func (s *Server) pairExchange(writer http.ResponseWriter, request *http.Request)
 }
 
 func (s *Server) snapshot(writer http.ResponseWriter, request *http.Request) {
+	var eventCursor uint64
+	if s.events != nil {
+		var err error
+		eventCursor, err = s.events.LatestCursor()
+		if err != nil {
+			writeError(writer, http.StatusBadGateway, "failed to read event cursor")
+			return
+		}
+	}
 	projects, err := s.adapter.ListProjects(request.Context())
 	if err != nil {
 		writeError(writer, http.StatusBadGateway, "failed to list projects")
@@ -152,14 +161,6 @@ func (s *Server) snapshot(writer http.ResponseWriter, request *http.Request) {
 	if err != nil {
 		writeError(writer, http.StatusBadGateway, "failed to list threads")
 		return
-	}
-	var eventCursor uint64
-	if s.events != nil {
-		eventCursor, err = s.events.LatestCursor()
-		if err != nil {
-			writeError(writer, http.StatusBadGateway, "failed to read event cursor")
-			return
-		}
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{
 		"protocolVersion": domain.ProtocolVersion,
