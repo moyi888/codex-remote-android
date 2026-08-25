@@ -11,10 +11,12 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 
 class BridgeApiException(
     val statusCode: Int,
@@ -32,6 +34,7 @@ class BridgeHttpClient(
         .followRedirects(false)
         .followSslRedirects(false)
         .retryOnConnectionFailure(false)
+        .addNetworkInterceptor(PairingNoRetryInterceptor)
         .build()
 
     fun exchange(
@@ -115,4 +118,19 @@ class BridgeHttpClient(
     private companion object {
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
+}
+
+private object PairingNoRetryInterceptor : Interceptor {
+    override fun intercept(chain: Interceptor.Chain): Response {
+        val request = chain.request()
+        val response = chain.proceed(request)
+        if (request.url.encodedPath != PAIRING_PATH || response.code != 503) {
+            return response
+        }
+        return response.newBuilder()
+            .header("Retry-After", "1")
+            .build()
+    }
+
+    private const val PAIRING_PATH = "/v1/pair/exchange"
 }
