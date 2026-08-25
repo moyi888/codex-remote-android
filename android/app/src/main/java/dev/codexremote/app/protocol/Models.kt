@@ -2,7 +2,52 @@ package dev.codexremote.app.protocol
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+
+@Serializable
+data class PairExchangeRequest(
+    val token: String,
+    val deviceId: String,
+    val deviceName: String,
+) {
+    override fun toString(): String =
+        "PairExchangeRequest(token=<redacted>, deviceId=$deviceId, deviceName=$deviceName)"
+}
+
+@Serializable
+data class DeviceCredential(
+    val protocolVersion: Int,
+    val deviceId: String,
+    val credential: String,
+) {
+    override fun toString(): String =
+        "DeviceCredential(protocolVersion=$protocolVersion, deviceId=$deviceId, credential=<redacted>)"
+}
+
+@Serializable
+data class Capabilities(
+    val readThreads: Boolean,
+    val startTask: Boolean,
+    val sendTurn: Boolean,
+    val steer: Boolean,
+    val stopTurn: Boolean,
+)
+
+@Serializable
+data class Snapshot(
+    val protocolVersion: Int,
+    val capabilities: Capabilities,
+    val projects: List<ProjectOption>,
+    val models: List<ModelOption>,
+    val threads: List<ThreadSummary>,
+)
+
+@Serializable
+data class CommandResponse(
+    val status: String,
+    val result: JsonElement? = null,
+)
 
 @Serializable
 enum class ThreadSource {
