@@ -26,6 +26,15 @@ data class DeviceCredential(
 }
 
 @Serializable
+data class StoredBridgeConnection(
+    val baseUrl: String,
+    val credential: DeviceCredential,
+) {
+    override fun toString(): String =
+        "StoredBridgeConnection(baseUrl=$baseUrl, credential=<redacted>)"
+}
+
+@Serializable
 data class Capabilities(
     val readThreads: Boolean,
     val startTask: Boolean,
