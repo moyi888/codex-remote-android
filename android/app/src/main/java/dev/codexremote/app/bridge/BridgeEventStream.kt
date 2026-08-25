@@ -45,6 +45,7 @@ class BridgeEventStream internal constructor(
     private val listener: EventStreamListener,
     private val webSocketFactory: WebSocket.Factory,
     private val json: Json = Json { ignoreUnknownKeys = true },
+    private val eventLoop: EventLoop = SingleThreadEventLoop(),
 ) {
     constructor(
         baseUrl: String,
@@ -68,55 +69,74 @@ class BridgeEventStream internal constructor(
         json = json,
     )
 
-    private val lock = Any()
+    @Volatile
+    private var disposed = false
 
-    private var webSocket: WebSocket? = null
+    private var activeGeneration = 0L
+    private var currentSocket: WebSocket? = null
     private var state = EventStreamState.DISCONNECTED
     private var currentCursor = 0L
-    private var activeGeneration = 0L
 
     fun connect() {
-        val request: Request
-        val generation: Long
-        synchronized(lock) {
-            if (webSocket != null || state != EventStreamState.DISCONNECTED) return
-            currentCursor = cursorStore.load().also {
-                require(it >= 0) { "Event cursor must be non-negative" }
-            }
-            activeGeneration += 1
-            generation = activeGeneration
-            request = Request.Builder()
-                .url(eventEndpoint(baseUrl, currentCursor))
-                .header(
-                    "Authorization",
-                    "Device ${credential.deviceId}:${credential.credential}",
-                )
-                .build()
-            state = EventStreamState.CONNECTING
-        }
-        notifyState(generation, EventStreamState.CONNECTING)
-        val socket = webSocketFactory.newWebSocket(request, SocketListener(generation))
-        val stale = synchronized(lock) {
-            if (generation == activeGeneration && state != EventStreamState.DISCONNECTED) {
-                webSocket = socket
-                false
-            } else {
-                true
-            }
-        }
-        if (stale) socket.cancel()
+        check(!disposed) { "Bridge event stream has been disposed" }
+        eventLoop.runSync(::connectOnLoop)
     }
 
     fun close() {
-        val socket: WebSocket?
-        val shouldNotify: Boolean
-        synchronized(lock) {
-            activeGeneration += 1
-            socket = webSocket
-            webSocket = null
-            shouldNotify = state != EventStreamState.DISCONNECTED
-            state = EventStreamState.DISCONNECTED
+        if (disposed) return
+        eventLoop.runSync(::closeOnLoop)
+    }
+
+    fun dispose() {
+        if (disposed) return
+        eventLoop.runSync {
+            if (!disposed) {
+                disposed = true
+                closeOnLoop()
+            }
         }
+        eventLoop.shutdown()
+    }
+
+    private fun connectOnLoop() {
+        check(!disposed) { "Bridge event stream has been disposed" }
+        if (currentSocket != null || state != EventStreamState.DISCONNECTED) return
+
+        currentCursor = cursorStore.load().also {
+            require(it >= 0) { "Event cursor must be non-negative" }
+        }
+        activeGeneration += 1
+        val generation = activeGeneration
+        val request = Request.Builder()
+            .url(eventEndpoint(baseUrl, currentCursor))
+            .header(
+                "Authorization",
+                "Device ${credential.deviceId}:${credential.credential}",
+            )
+            .build()
+        state = EventStreamState.CONNECTING
+        notifyState(EventStreamState.CONNECTING)
+        if (!isActive(generation)) return
+
+        val socket = try {
+            webSocketFactory.newWebSocket(request, SocketListener(generation))
+        } catch (_: Exception) {
+            failAndTerminate(generation, null, "Bridge event stream connection failed")
+            return
+        }
+        if (isActive(generation) && state != EventStreamState.DISCONNECTED) {
+            currentSocket = socket
+        } else {
+            socket.cancel()
+        }
+    }
+
+    private fun closeOnLoop() {
+        activeGeneration += 1
+        val socket = currentSocket
+        currentSocket = null
+        val shouldNotify = state != EventStreamState.DISCONNECTED
+        state = EventStreamState.DISCONNECTED
         socket?.close(NORMAL_CLOSURE, CLIENT_CLOSED_REASON)
         if (shouldNotify) notifyState(EventStreamState.DISCONNECTED)
     }
@@ -153,167 +173,152 @@ class BridgeEventStream internal constructor(
         val envelope = try {
             json.decodeFromString<EventEnvelope<JsonObject>>(text)
         } catch (_: SerializationException) {
-            failAndClose(generation, webSocket, "Bridge event stream received an invalid event")
+            failAndTerminate(generation, webSocket, INVALID_EVENT_MESSAGE)
             return
         } catch (_: IllegalArgumentException) {
-            failAndClose(generation, webSocket, "Bridge event stream received an invalid event")
+            failAndTerminate(generation, webSocket, INVALID_EVENT_MESSAGE)
+            return
+        }
+        if (
+            envelope.protocolVersion != PROTOCOL_VERSION ||
+            envelope.eventCursor < 0 ||
+            envelope.type.isBlank()
+        ) {
+            failAndTerminate(generation, webSocket, INVALID_EVENT_MESSAGE)
             return
         }
 
         if (envelope.type == SNAPSHOT_REQUIRED_TYPE) {
-            refreshSnapshotAndClose(generation, webSocket)
+            refreshSnapshotAndTerminate(generation, webSocket)
             return
         }
-
-        val cursor = synchronized(lock) {
-            if (generation != activeGeneration) return
-            currentCursor
-        }
-        if (envelope.eventCursor <= cursor) return
-        if (envelope.eventCursor != cursor + 1) {
-            refreshSnapshotAndClose(generation, webSocket)
+        if (envelope.eventCursor <= currentCursor) return
+        if (envelope.eventCursor != currentCursor + 1) {
+            refreshSnapshotAndTerminate(generation, webSocket)
             return
         }
 
         try {
             listener.onEvent(envelope)
         } catch (_: Exception) {
-            failAndClose(generation, webSocket, "Event listener failed")
-            return
-        }
-        val saveFailed = synchronized(lock) {
-            if (generation != activeGeneration) return
-            try {
-                cursorStore.save(envelope.eventCursor)
-                currentCursor = envelope.eventCursor
-                false
-            } catch (_: Exception) {
-                true
-            }
-        }
-        if (saveFailed) {
-            failAndClose(generation, webSocket, "Unable to persist event cursor")
-            return
-        }
-    }
-
-    private fun refreshSnapshotAndClose(generation: Long, webSocket: WebSocket) {
-        if (!isActive(generation)) return
-        val snapshot = try {
-            snapshotLoader.load()
-        } catch (_: Exception) {
-            failAndClose(generation, webSocket, "Unable to refresh bridge snapshot")
-            return
-        }
-        if (snapshot.eventCursor < 0) {
-            failAndClose(generation, webSocket, "Unable to refresh bridge snapshot")
-            return
-        }
-        val saveFailed = synchronized(lock) {
-            if (generation != activeGeneration) return
-            try {
-                cursorStore.save(snapshot.eventCursor)
-                currentCursor = snapshot.eventCursor
-                false
-            } catch (_: Exception) {
-                true
-            }
-        }
-        if (saveFailed) {
-            failAndClose(generation, webSocket, "Unable to persist snapshot cursor")
+            failAndTerminate(generation, webSocket, "Event listener failed")
             return
         }
         if (!isActive(generation)) return
         try {
-            listener.onSnapshot(snapshot)
+            cursorStore.save(envelope.eventCursor)
+            currentCursor = envelope.eventCursor
         } catch (_: Exception) {
-            failAndClose(generation, webSocket, "Snapshot listener failed")
-            return
+            failAndTerminate(generation, webSocket, "Unable to persist event cursor")
         }
-        closeCurrentSocket(generation, webSocket)
     }
 
-    private fun failAndClose(generation: Long, webSocket: WebSocket?, safeMessage: String) {
+    private fun refreshSnapshotAndTerminate(generation: Long, webSocket: WebSocket) {
+        if (!isActive(generation)) return
+        val snapshot = try {
+            snapshotLoader.load()
+        } catch (_: Exception) {
+            failAndTerminate(generation, webSocket, "Unable to refresh bridge snapshot")
+            return
+        }
+        if (snapshot.protocolVersion != PROTOCOL_VERSION || snapshot.eventCursor < 0) {
+            failAndTerminate(generation, webSocket, "Unable to refresh bridge snapshot")
+            return
+        }
+        try {
+            listener.onSnapshot(snapshot)
+        } catch (_: Exception) {
+            failAndTerminate(generation, webSocket, "Snapshot listener failed")
+            return
+        }
+        if (!isActive(generation)) return
+        try {
+            cursorStore.save(snapshot.eventCursor)
+            currentCursor = snapshot.eventCursor
+        } catch (_: Exception) {
+            failAndTerminate(generation, webSocket, "Unable to persist snapshot cursor")
+            return
+        }
+        terminate(generation, webSocket)
+    }
+
+    private fun failAndTerminate(generation: Long, webSocket: WebSocket?, safeMessage: String) {
         if (!isActive(generation)) return
         try {
             listener.onFailure(BridgeEventStreamException(safeMessage))
         } catch (_: Exception) {
             // A failing failure callback must not expose or destabilize the stream.
         }
-        closeCurrentSocket(generation, webSocket)
+        terminate(generation, webSocket)
     }
 
-    private fun closeCurrentSocket(generation: Long, expected: WebSocket? = null) {
-        val socket: WebSocket?
-        val shouldNotify: Boolean
-        synchronized(lock) {
-            if (generation != activeGeneration) return
-            activeGeneration += 1
-            socket = webSocket ?: expected
-            webSocket = null
-            shouldNotify = state != EventStreamState.DISCONNECTED
-            state = EventStreamState.DISCONNECTED
-        }
+    private fun terminate(generation: Long, expected: WebSocket? = null) {
+        if (!isActive(generation)) return
+        activeGeneration += 1
+        val socket = currentSocket ?: expected
+        currentSocket = null
+        val shouldNotify = state != EventStreamState.DISCONNECTED
+        state = EventStreamState.DISCONNECTED
         socket?.close(NORMAL_CLOSURE, CLIENT_CLOSED_REASON)
         if (shouldNotify) notifyState(EventStreamState.DISCONNECTED)
     }
 
-    private fun isActive(generation: Long): Boolean = synchronized(lock) {
-        generation == activeGeneration
-    }
-
-    private fun notifyState(generation: Long, newState: EventStreamState) {
-        if (!isActive(generation)) return
-        notifyState(newState)
-    }
+    private fun isActive(generation: Long): Boolean = generation == activeGeneration
 
     private fun notifyState(newState: EventStreamState) {
         try {
             listener.onStateChanged(newState)
         } catch (_: Exception) {
-            // State reporting is best-effort and must not escape an OkHttp callback.
+            // State reporting is best-effort and must not escape the event loop.
         }
     }
 
     private inner class SocketListener(private val generation: Long) : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: Response) {
-            val shouldNotify = synchronized(lock) {
-                if (generation != activeGeneration || state != EventStreamState.CONNECTING) {
-                    false
-                } else {
-                    this@BridgeEventStream.webSocket = webSocket
-                    state = EventStreamState.CONNECTED
-                    true
+            eventLoop.dispatch {
+                if (!isActive(generation)) {
+                    webSocket.cancel()
+                    return@dispatch
                 }
+                currentSocket = webSocket
+                state = EventStreamState.CONNECTED
+                notifyState(EventStreamState.CONNECTED)
             }
-            if (shouldNotify) notifyState(generation, EventStreamState.CONNECTED)
-            else webSocket.cancel()
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
-            if (!isActive(generation)) return
-            handleMessage(generation, webSocket, text)
+            eventLoop.dispatch {
+                if (isActive(generation)) handleMessage(generation, webSocket, text)
+            }
         }
 
         override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-            if (!isActive(generation)) return
-            webSocket.close(code, null)
-            closeCurrentSocket(generation, webSocket)
+            eventLoop.dispatch {
+                if (!isActive(generation)) return@dispatch
+                webSocket.close(code, null)
+                terminate(generation, webSocket)
+            }
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-            if (!isActive(generation)) return
-            closeCurrentSocket(generation, webSocket)
+            eventLoop.dispatch {
+                if (isActive(generation)) terminate(generation, webSocket)
+            }
         }
 
         override fun onFailure(webSocket: WebSocket, error: Throwable, response: Response?) {
-            if (!isActive(generation)) return
-            failAndClose(generation, webSocket, "Bridge event stream connection failed")
+            eventLoop.dispatch {
+                if (isActive(generation)) {
+                    failAndTerminate(generation, webSocket, "Bridge event stream connection failed")
+                }
+            }
         }
     }
 
     private companion object {
+        const val PROTOCOL_VERSION = 1
         const val SNAPSHOT_REQUIRED_TYPE = "snapshot.required"
+        const val INVALID_EVENT_MESSAGE = "Bridge event stream received an invalid event"
         const val NORMAL_CLOSURE = 1000
         const val CLIENT_CLOSED_REASON = "event stream closed"
         const val INVALID_BASE_URL_MESSAGE = "baseUrl must be an HTTP(S) origin"
