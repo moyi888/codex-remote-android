@@ -6,6 +6,7 @@ import dev.codexremote.app.protocol.EventEnvelope
 import dev.codexremote.app.protocol.Snapshot
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -28,6 +29,7 @@ import org.junit.Test
 class BridgeEventStreamTest {
     private lateinit var server: MockWebServer
     private lateinit var httpClient: OkHttpClient
+    private val streams = CopyOnWriteArrayList<BridgeEventStream>()
 
     @Before
     fun setUp() {
@@ -38,6 +40,7 @@ class BridgeEventStreamTest {
 
     @After
     fun tearDown() {
+        streams.forEach(BridgeEventStream::dispose)
         httpClient.dispatcher.cancelAll()
         server.shutdown()
         httpClient.dispatcher.executorService.shutdownNow()
@@ -54,6 +57,7 @@ class BridgeEventStreamTest {
         stream.connect()
 
         assertTrue(opened.await(TIMEOUT_SECONDS, TimeUnit.SECONDS))
+        assertTrue(listener.connected.await(TIMEOUT_SECONDS, TimeUnit.SECONDS))
         val request = server.takeRequest(TIMEOUT_SECONDS, TimeUnit.SECONDS)
         requireNotNull(request)
         assertEquals("/v1/events?cursor=41", request.path)
@@ -73,15 +77,16 @@ class BridgeEventStreamTest {
             "https://bridge.example?mode=events",
             "https://bridge.example#events",
         ).forEach { invalidBaseUrl ->
+            val stream = BridgeEventStream(
+                baseUrl = invalidBaseUrl,
+                credential = DeviceCredential(1, "phone-1", "credential-do-not-leak"),
+                cursorStore = InMemoryCursorStore(),
+                snapshotLoader = RecordingSnapshotLoader(snapshot(0)),
+                listener = RecordingListener(),
+                okHttpClient = httpClient,
+            ).also(streams::add)
             try {
-                BridgeEventStream(
-                    baseUrl = invalidBaseUrl,
-                    credential = DeviceCredential(1, "phone-1", "credential-do-not-leak"),
-                    cursorStore = InMemoryCursorStore(),
-                    snapshotLoader = RecordingSnapshotLoader(snapshot(0)),
-                    listener = RecordingListener(),
-                    okHttpClient = httpClient,
-                ).connect()
+                stream.connect()
                 throw AssertionError("invalid base URL must be rejected")
             } catch (expected: IllegalArgumentException) {
                 assertEquals("baseUrl must be an HTTP(S) origin", expected.message)
@@ -92,7 +97,7 @@ class BridgeEventStreamTest {
     @Test
     fun staleClosingCallbacksDuringReconnectCannotDisconnectOrCloseNewConnection() {
         val factory = ControlledWebSocketFactory()
-        val listener = RecordingListener()
+        val listener = RecordingListener(expectedConnections = 2)
         val stream = newControlledStream(factory = factory, listener = listener)
 
         stream.connect()
@@ -110,6 +115,7 @@ class BridgeEventStreamTest {
         val second = factory.connections[1]
         second.open()
 
+        assertTrue(listener.connected.await(TIMEOUT_SECONDS, TimeUnit.SECONDS))
         assertEquals(EventStreamState.CONNECTED, listener.states.last())
         assertEquals(0, second.webSocket.closeCalls)
         assertEquals(0, second.webSocket.cancelCalls)
@@ -120,7 +126,7 @@ class BridgeEventStreamTest {
         val factory = ControlledWebSocketFactory()
         val cursorStore = InMemoryCursorStore()
         val snapshotLoader = RecordingSnapshotLoader(snapshot(9))
-        val listener = RecordingListener()
+        val listener = RecordingListener(expectedConnections = 2)
         val stream = newControlledStream(
             factory = factory,
             cursorStore = cursorStore,
@@ -134,10 +140,12 @@ class BridgeEventStreamTest {
         stream.close()
         stream.connect()
         factory.connections[1].open()
+        assertTrue(listener.connected.await(TIMEOUT_SECONDS, TimeUnit.SECONDS))
 
         first.message(event(1, "thread.updated"))
         first.message(event(3, "thread.updated"))
         first.message(event(0, "snapshot.required"))
+        stream.close()
 
         assertTrue(listener.events.isEmpty())
         assertTrue(listener.snapshots.isEmpty())
@@ -145,7 +153,115 @@ class BridgeEventStreamTest {
         assertEquals(0L, cursorStore.load())
         assertTrue(cursorStore.saved.isEmpty())
         assertEquals(0, snapshotLoader.calls)
-        assertEquals(EventStreamState.CONNECTED, listener.states.last())
+        assertEquals(EventStreamState.DISCONNECTED, listener.states.last())
+    }
+
+    @Test
+    fun snapshotListenerFailureDoesNotSaveSnapshotCursor() {
+        val factory = ControlledWebSocketFactory()
+        val cursorStore = InMemoryCursorStore(4)
+        val listener = RecordingListener(onSnapshotBlock = { error("snapshot listener failed") })
+        val stream = newControlledStream(
+            factory = factory,
+            cursorStore = cursorStore,
+            snapshotLoader = RecordingSnapshotLoader(snapshot(9)),
+            listener = listener,
+        )
+        stream.connect()
+        factory.connections.single().open()
+
+        factory.connections.single().message(event(4, "snapshot.required"))
+
+        assertTrue(listener.failed.await(TIMEOUT_SECONDS, TimeUnit.SECONDS))
+        assertEquals("Snapshot listener failed", listener.failures.single().message)
+        assertEquals(4L, cursorStore.load())
+        assertTrue(cursorStore.saved.isEmpty())
+    }
+
+    @Test
+    fun closeWaitsForStartedDeliveryAndNoOldSideEffectsOccurAfterItReturns() {
+        val factory = ControlledWebSocketFactory()
+        val cursorStore = InMemoryCursorStore()
+        val eventEntered = CountDownLatch(1)
+        val releaseEvent = CountDownLatch(1)
+        val closeStarted = CountDownLatch(1)
+        val closeFinished = CountDownLatch(1)
+        val listener = RecordingListener(
+            onEventBlock = {
+                eventEntered.countDown()
+                assertTrue(releaseEvent.await(TIMEOUT_SECONDS, TimeUnit.SECONDS))
+            },
+        )
+        val stream = newControlledStream(factory, cursorStore, listener = listener)
+        val closer = Executors.newSingleThreadExecutor()
+        try {
+            stream.connect()
+            factory.connections.single().open()
+            factory.connections.single().message(event(1, "thread.updated"))
+            assertTrue(eventEntered.await(TIMEOUT_SECONDS, TimeUnit.SECONDS))
+
+            val close = closer.submit {
+                closeStarted.countDown()
+                stream.close()
+                stream.connect()
+                closeFinished.countDown()
+            }
+            assertTrue(closeStarted.await(TIMEOUT_SECONDS, TimeUnit.SECONDS))
+            assertFalse(closeFinished.await(200, TimeUnit.MILLISECONDS))
+            releaseEvent.countDown()
+            close.get(TIMEOUT_SECONDS, TimeUnit.SECONDS)
+
+            val cursorAfterClose = cursorStore.load()
+            assertEquals(1L, cursorAfterClose)
+            assertEquals(listOf(1L), cursorStore.saved)
+            assertEquals(cursorAfterClose, cursorStore.load())
+            assertEquals(2, factory.connections.size)
+        } finally {
+            releaseEvent.countDown()
+            closer.shutdownNow()
+        }
+    }
+
+    @Test
+    fun listenerCanCloseStreamWithoutDeadlockOrCursorAdvance() {
+        val factory = ControlledWebSocketFactory()
+        val cursorStore = InMemoryCursorStore()
+        lateinit var stream: BridgeEventStream
+        val listener = RecordingListener(onEventBlock = { stream.close() })
+        stream = newControlledStream(factory, cursorStore, listener = listener)
+        stream.connect()
+        factory.connections.single().open()
+
+        factory.connections.single().message(event(1, "thread.updated"))
+
+        assertTrue(listener.disconnected.await(TIMEOUT_SECONDS, TimeUnit.SECONDS))
+        assertTrue(cursorStore.saved.isEmpty())
+        assertEquals(0L, cursorStore.load())
+    }
+
+    @Test
+    fun rejectsInvalidEnvelopeMetadataWithoutDeliveryOrCursorAdvance() {
+        listOf(
+            """{"protocolVersion":2,"eventCursor":1,"type":"thread.updated","payload":{}}""",
+            """{"protocolVersion":1,"eventCursor":-1,"type":"thread.updated","payload":{}}""",
+            """{"protocolVersion":1,"eventCursor":1,"type":"   ","payload":{}}""",
+        ).forEach { maliciousEvent ->
+            val factory = ControlledWebSocketFactory()
+            val cursorStore = InMemoryCursorStore()
+            val listener = RecordingListener()
+            val stream = newControlledStream(factory, cursorStore, listener = listener)
+            stream.connect()
+            factory.connections.single().open()
+
+            factory.connections.single().message(maliciousEvent)
+
+            assertTrue(listener.failed.await(TIMEOUT_SECONDS, TimeUnit.SECONDS))
+            assertEquals("Bridge event stream received an invalid event", listener.failures.single().message)
+            assertTrue(listener.events.isEmpty())
+            assertTrue(listener.snapshots.isEmpty())
+            assertTrue(cursorStore.saved.isEmpty())
+            assertEquals(0L, cursorStore.load())
+        }
     }
 
     @Test
@@ -165,7 +281,7 @@ class BridgeEventStreamTest {
         stream.connect()
 
         assertTrue(delivered.await(TIMEOUT_SECONDS, TimeUnit.SECONDS))
-        assertTrue(awaitCondition { cursorStore.load() == 1L })
+        assertTrue(cursorStore.savedCursor.await(TIMEOUT_SECONDS, TimeUnit.SECONDS))
         assertEquals(listOf(1L), cursorStore.saved)
         stream.close()
     }
@@ -188,6 +304,7 @@ class BridgeEventStreamTest {
         stream.connect()
 
         assertTrue(listener.eventsArrived.await(TIMEOUT_SECONDS, TimeUnit.SECONDS))
+        assertTrue(cursorStore.savedCursor.await(TIMEOUT_SECONDS, TimeUnit.SECONDS))
         assertEquals(listOf("next"), listener.events.map { it.type })
         assertEquals(listOf(6L), cursorStore.saved)
         stream.close()
@@ -205,6 +322,7 @@ class BridgeEventStreamTest {
         stream.connect()
 
         assertTrue(listener.snapshotsArrived.await(TIMEOUT_SECONDS, TimeUnit.SECONDS))
+        assertTrue(cursorStore.savedCursor.await(TIMEOUT_SECONDS, TimeUnit.SECONDS))
         assertEquals(1, snapshotLoader.calls)
         assertEquals(listOf(snapshot), listener.snapshots)
         assertTrue(listener.events.isEmpty())
@@ -223,6 +341,7 @@ class BridgeEventStreamTest {
         stream.connect()
 
         assertTrue(listener.snapshotsArrived.await(TIMEOUT_SECONDS, TimeUnit.SECONDS))
+        assertTrue(cursorStore.savedCursor.await(TIMEOUT_SECONDS, TimeUnit.SECONDS))
         assertEquals(listOf(11L), cursorStore.saved)
         assertTrue(listener.events.isEmpty())
         assertTrue(listener.disconnected.await(TIMEOUT_SECONDS, TimeUnit.SECONDS))
@@ -301,7 +420,7 @@ class BridgeEventStreamTest {
         snapshotLoader = snapshotLoader,
         listener = listener,
         okHttpClient = httpClient,
-    )
+    ).also(streams::add)
 
     private fun newControlledStream(
         factory: WebSocket.Factory,
@@ -315,7 +434,7 @@ class BridgeEventStreamTest {
         snapshotLoader = snapshotLoader,
         listener = listener,
         webSocketFactory = factory,
-    )
+    ).also(streams::add)
 
     private fun webSocketResponse(
         messages: List<String> = emptyList(),
@@ -341,19 +460,11 @@ class BridgeEventStreamTest {
         threads = emptyList(),
     )
 
-    private fun awaitCondition(condition: () -> Boolean): Boolean {
-        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(TIMEOUT_SECONDS)
-        while (System.nanoTime() < deadline) {
-            if (condition()) return true
-            Thread.yield()
-        }
-        return condition()
-    }
-
     private class InMemoryCursorStore(initialCursor: Long = 0) : CursorStore {
         @Volatile
         private var cursor = initialCursor
         val saved = CopyOnWriteArrayList<Long>()
+        val savedCursor = CountDownLatch(1)
 
         override fun load(): Long = cursor
 
@@ -361,6 +472,7 @@ class BridgeEventStreamTest {
             require(cursor >= 0)
             this.cursor = cursor
             saved += cursor
+            savedCursor.countDown()
         }
 
         override fun clear() {
@@ -379,9 +491,11 @@ class BridgeEventStreamTest {
     }
 
     private class RecordingListener(
+        expectedConnections: Int = 1,
         expectedEvents: Int = 0,
         expectedSnapshots: Int = 0,
         private val onEventBlock: (EventEnvelope<JsonObject>) -> Unit = {},
+        private val onSnapshotBlock: (Snapshot) -> Unit = {},
     ) : EventStreamListener {
         val states = CopyOnWriteArrayList<EventStreamState>()
         val events = CopyOnWriteArrayList<EventEnvelope<JsonObject>>()
@@ -390,10 +504,12 @@ class BridgeEventStreamTest {
         val eventsArrived = CountDownLatch(expectedEvents)
         val snapshotsArrived = CountDownLatch(expectedSnapshots)
         val failed = CountDownLatch(1)
+        val connected = CountDownLatch(expectedConnections)
         val disconnected = CountDownLatch(1)
 
         override fun onStateChanged(state: EventStreamState) {
             states += state
+            if (state == EventStreamState.CONNECTED) connected.countDown()
             if (state == EventStreamState.DISCONNECTED) disconnected.countDown()
         }
 
@@ -404,6 +520,7 @@ class BridgeEventStreamTest {
         }
 
         override fun onSnapshot(snapshot: Snapshot) {
+            onSnapshotBlock(snapshot)
             snapshots += snapshot
             snapshotsArrived.countDown()
         }
