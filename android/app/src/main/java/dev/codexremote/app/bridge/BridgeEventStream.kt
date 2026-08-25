@@ -37,33 +37,54 @@ class BridgeEventStreamException(message: String) : RuntimeException(message) {
     override fun toString(): String = "BridgeEventStreamException(message=$message)"
 }
 
-class BridgeEventStream(
+class BridgeEventStream internal constructor(
     private val baseUrl: String,
     private val credential: DeviceCredential,
     private val cursorStore: CursorStore,
     private val snapshotLoader: SnapshotLoader,
     private val listener: EventStreamListener,
-    okHttpClient: OkHttpClient = OkHttpClient(),
+    private val webSocketFactory: WebSocket.Factory,
     private val json: Json = Json { ignoreUnknownKeys = true },
 ) {
-    private val httpClient = okHttpClient.newBuilder()
-        .followRedirects(false)
-        .followSslRedirects(false)
-        .retryOnConnectionFailure(false)
-        .build()
+    constructor(
+        baseUrl: String,
+        credential: DeviceCredential,
+        cursorStore: CursorStore,
+        snapshotLoader: SnapshotLoader,
+        listener: EventStreamListener,
+        okHttpClient: OkHttpClient = OkHttpClient(),
+        json: Json = Json { ignoreUnknownKeys = true },
+    ) : this(
+        baseUrl = baseUrl,
+        credential = credential,
+        cursorStore = cursorStore,
+        snapshotLoader = snapshotLoader,
+        listener = listener,
+        webSocketFactory = okHttpClient.newBuilder()
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .retryOnConnectionFailure(false)
+            .build(),
+        json = json,
+    )
+
     private val lock = Any()
 
     private var webSocket: WebSocket? = null
     private var state = EventStreamState.DISCONNECTED
     private var currentCursor = 0L
+    private var activeGeneration = 0L
 
     fun connect() {
         val request: Request
+        val generation: Long
         synchronized(lock) {
             if (webSocket != null || state != EventStreamState.DISCONNECTED) return
             currentCursor = cursorStore.load().also {
                 require(it >= 0) { "Event cursor must be non-negative" }
             }
+            activeGeneration += 1
+            generation = activeGeneration
             request = Request.Builder()
                 .url(eventEndpoint(baseUrl, currentCursor))
                 .header(
@@ -73,19 +94,31 @@ class BridgeEventStream(
                 .build()
             state = EventStreamState.CONNECTING
         }
-        notifyState(EventStreamState.CONNECTING)
-        val socket = httpClient.newWebSocket(request, SocketListener())
-        synchronized(lock) {
-            if (state == EventStreamState.DISCONNECTED) {
-                socket.close(NORMAL_CLOSURE, CLIENT_CLOSED_REASON)
-            } else {
+        notifyState(generation, EventStreamState.CONNECTING)
+        val socket = webSocketFactory.newWebSocket(request, SocketListener(generation))
+        val stale = synchronized(lock) {
+            if (generation == activeGeneration && state != EventStreamState.DISCONNECTED) {
                 webSocket = socket
+                false
+            } else {
+                true
             }
         }
+        if (stale) socket.cancel()
     }
 
     fun close() {
-        closeCurrentSocket()
+        val socket: WebSocket?
+        val shouldNotify: Boolean
+        synchronized(lock) {
+            activeGeneration += 1
+            socket = webSocket
+            webSocket = null
+            shouldNotify = state != EventStreamState.DISCONNECTED
+            state = EventStreamState.DISCONNECTED
+        }
+        socket?.close(NORMAL_CLOSURE, CLIENT_CLOSED_REASON)
+        if (shouldNotify) notifyState(EventStreamState.DISCONNECTED)
     }
 
     private fun eventEndpoint(baseUrl: String, cursor: Long): String {
@@ -115,89 +148,107 @@ class BridgeEventStream(
         }
     }
 
-    private fun handleMessage(webSocket: WebSocket, text: String) {
+    private fun handleMessage(generation: Long, webSocket: WebSocket, text: String) {
+        if (!isActive(generation)) return
         val envelope = try {
             json.decodeFromString<EventEnvelope<JsonObject>>(text)
         } catch (_: SerializationException) {
-            failAndClose(webSocket, "Bridge event stream received an invalid event")
+            failAndClose(generation, webSocket, "Bridge event stream received an invalid event")
             return
         } catch (_: IllegalArgumentException) {
-            failAndClose(webSocket, "Bridge event stream received an invalid event")
+            failAndClose(generation, webSocket, "Bridge event stream received an invalid event")
             return
         }
 
         if (envelope.type == SNAPSHOT_REQUIRED_TYPE) {
-            refreshSnapshotAndClose(webSocket)
+            refreshSnapshotAndClose(generation, webSocket)
             return
         }
 
-        val cursor = synchronized(lock) { currentCursor }
+        val cursor = synchronized(lock) {
+            if (generation != activeGeneration) return
+            currentCursor
+        }
         if (envelope.eventCursor <= cursor) return
         if (envelope.eventCursor != cursor + 1) {
-            refreshSnapshotAndClose(webSocket)
+            refreshSnapshotAndClose(generation, webSocket)
             return
         }
 
         try {
             listener.onEvent(envelope)
         } catch (_: Exception) {
-            failAndClose(webSocket, "Event listener failed")
+            failAndClose(generation, webSocket, "Event listener failed")
             return
         }
-        try {
-            cursorStore.save(envelope.eventCursor)
-        } catch (_: Exception) {
-            failAndClose(webSocket, "Unable to persist event cursor")
-            return
+        val saveFailed = synchronized(lock) {
+            if (generation != activeGeneration) return
+            try {
+                cursorStore.save(envelope.eventCursor)
+                currentCursor = envelope.eventCursor
+                false
+            } catch (_: Exception) {
+                true
+            }
         }
-        synchronized(lock) {
-            currentCursor = envelope.eventCursor
+        if (saveFailed) {
+            failAndClose(generation, webSocket, "Unable to persist event cursor")
+            return
         }
     }
 
-    private fun refreshSnapshotAndClose(webSocket: WebSocket) {
+    private fun refreshSnapshotAndClose(generation: Long, webSocket: WebSocket) {
+        if (!isActive(generation)) return
         val snapshot = try {
             snapshotLoader.load()
         } catch (_: Exception) {
-            failAndClose(webSocket, "Unable to refresh bridge snapshot")
+            failAndClose(generation, webSocket, "Unable to refresh bridge snapshot")
             return
         }
         if (snapshot.eventCursor < 0) {
-            failAndClose(webSocket, "Unable to refresh bridge snapshot")
+            failAndClose(generation, webSocket, "Unable to refresh bridge snapshot")
             return
         }
-        try {
-            cursorStore.save(snapshot.eventCursor)
-        } catch (_: Exception) {
-            failAndClose(webSocket, "Unable to persist snapshot cursor")
+        val saveFailed = synchronized(lock) {
+            if (generation != activeGeneration) return
+            try {
+                cursorStore.save(snapshot.eventCursor)
+                currentCursor = snapshot.eventCursor
+                false
+            } catch (_: Exception) {
+                true
+            }
+        }
+        if (saveFailed) {
+            failAndClose(generation, webSocket, "Unable to persist snapshot cursor")
             return
         }
-        synchronized(lock) {
-            currentCursor = snapshot.eventCursor
-        }
+        if (!isActive(generation)) return
         try {
             listener.onSnapshot(snapshot)
         } catch (_: Exception) {
-            failAndClose(webSocket, "Snapshot listener failed")
+            failAndClose(generation, webSocket, "Snapshot listener failed")
             return
         }
-        closeCurrentSocket(webSocket)
+        closeCurrentSocket(generation, webSocket)
     }
 
-    private fun failAndClose(webSocket: WebSocket?, safeMessage: String) {
+    private fun failAndClose(generation: Long, webSocket: WebSocket?, safeMessage: String) {
+        if (!isActive(generation)) return
         try {
             listener.onFailure(BridgeEventStreamException(safeMessage))
         } catch (_: Exception) {
             // A failing failure callback must not expose or destabilize the stream.
         }
-        closeCurrentSocket(webSocket)
+        closeCurrentSocket(generation, webSocket)
     }
 
-    private fun closeCurrentSocket(expected: WebSocket? = null) {
+    private fun closeCurrentSocket(generation: Long, expected: WebSocket? = null) {
         val socket: WebSocket?
         val shouldNotify: Boolean
         synchronized(lock) {
-            if (expected != null && webSocket != null && webSocket !== expected) return
+            if (generation != activeGeneration) return
+            activeGeneration += 1
             socket = webSocket ?: expected
             webSocket = null
             shouldNotify = state != EventStreamState.DISCONNECTED
@@ -205,6 +256,15 @@ class BridgeEventStream(
         }
         socket?.close(NORMAL_CLOSURE, CLIENT_CLOSED_REASON)
         if (shouldNotify) notifyState(EventStreamState.DISCONNECTED)
+    }
+
+    private fun isActive(generation: Long): Boolean = synchronized(lock) {
+        generation == activeGeneration
+    }
+
+    private fun notifyState(generation: Long, newState: EventStreamState) {
+        if (!isActive(generation)) return
+        notifyState(newState)
     }
 
     private fun notifyState(newState: EventStreamState) {
@@ -215,10 +275,10 @@ class BridgeEventStream(
         }
     }
 
-    private inner class SocketListener : WebSocketListener() {
+    private inner class SocketListener(private val generation: Long) : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: Response) {
             val shouldNotify = synchronized(lock) {
-                if (state != EventStreamState.CONNECTING) {
+                if (generation != activeGeneration || state != EventStreamState.CONNECTING) {
                     false
                 } else {
                     this@BridgeEventStream.webSocket = webSocket
@@ -226,30 +286,29 @@ class BridgeEventStream(
                     true
                 }
             }
-            if (shouldNotify) notifyState(EventStreamState.CONNECTED)
-            else webSocket.close(NORMAL_CLOSURE, CLIENT_CLOSED_REASON)
+            if (shouldNotify) notifyState(generation, EventStreamState.CONNECTED)
+            else webSocket.cancel()
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
-            handleMessage(webSocket, text)
+            if (!isActive(generation)) return
+            handleMessage(generation, webSocket, text)
         }
 
         override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+            if (!isActive(generation)) return
             webSocket.close(code, null)
-            closeCurrentSocket(webSocket)
+            closeCurrentSocket(generation, webSocket)
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-            closeCurrentSocket(webSocket)
+            if (!isActive(generation)) return
+            closeCurrentSocket(generation, webSocket)
         }
 
         override fun onFailure(webSocket: WebSocket, error: Throwable, response: Response?) {
-            val active = synchronized(lock) {
-                state != EventStreamState.DISCONNECTED &&
-                    (this@BridgeEventStream.webSocket == null ||
-                        this@BridgeEventStream.webSocket === webSocket)
-            }
-            if (active) failAndClose(webSocket, "Bridge event stream connection failed")
+            if (!isActive(generation)) return
+            failAndClose(generation, webSocket, "Bridge event stream connection failed")
         }
     }
 
