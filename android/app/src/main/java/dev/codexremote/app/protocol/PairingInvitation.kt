@@ -50,8 +50,8 @@ class PairingInvitation private constructor(
         private fun parseUri(raw: String, message: String): URI =
             try {
                 URI(raw)
-            } catch (error: Exception) {
-                throw IllegalArgumentException(message, error)
+            } catch (_: Exception) {
+                throw IllegalArgumentException(message)
             }
 
         private fun parseQuery(rawQuery: String?): Map<String, String> {
@@ -82,8 +82,8 @@ class PairingInvitation private constructor(
         private fun decode(value: String): String =
             try {
                 URLDecoder.decode(value, StandardCharsets.UTF_8.name())
-            } catch (error: Exception) {
-                throw IllegalArgumentException("invalid pairing invitation query", error)
+            } catch (_: Exception) {
+                throw IllegalArgumentException("invalid pairing invitation query")
             }
     }
 }

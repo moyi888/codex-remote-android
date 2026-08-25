@@ -4,11 +4,15 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -22,16 +26,18 @@ import (
 )
 
 type serveOptions struct {
-	listen      string
-	data        string
-	fake        bool
-	allowPublic bool
+	listen       string
+	advertiseURL string
+	data         string
+	fake         bool
+	allowPublic  bool
 }
 
 func parseServeOptions(args []string) (serveOptions, error) {
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
 	var options serveOptions
 	flags.StringVar(&options.listen, "listen", "127.0.0.1:8787", "Bridge listen address")
+	flags.StringVar(&options.advertiseURL, "advertise-url", "", "Client-reachable Bridge HTTP(S) origin")
 	flags.StringVar(&options.data, "data", "data/bridge.db", "SQLite database path")
 	flags.BoolVar(&options.fake, "fake", false, "Use the development Codex adapter")
 	flags.BoolVar(&options.allowPublic, "allow-public-listen", false, "Allow non-Tailscale listeners")
@@ -41,7 +47,52 @@ func parseServeOptions(args []string) (serveOptions, error) {
 	if err := config.ValidateListenAddress(options.listen, options.allowPublic); err != nil {
 		return serveOptions{}, err
 	}
+	advertiseURL, err := normalizeAdvertiseURL(options.listen, options.advertiseURL)
+	if err != nil {
+		return serveOptions{}, err
+	}
+	options.advertiseURL = advertiseURL
 	return options, nil
+}
+
+func normalizeAdvertiseURL(listenAddress, explicit string) (string, error) {
+	if explicit == "" {
+		host, _, err := net.SplitHostPort(listenAddress)
+		if err != nil {
+			return "", fmt.Errorf("invalid listen address: %w", err)
+		}
+		ip, err := netip.ParseAddr(host)
+		if err != nil || ip.IsLoopback() || ip.IsUnspecified() {
+			return "", fmt.Errorf("listen address is not client-reachable; provide --advertise-url")
+		}
+		return (&url.URL{Scheme: "http", Host: listenAddress}).String(), nil
+	}
+
+	parsed, err := url.Parse(explicit)
+	if err != nil {
+		return "", fmt.Errorf("invalid advertise URL")
+	}
+	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" {
+		return "", fmt.Errorf("advertise URL must be an HTTP(S) origin with a host")
+	}
+	if parsed.User != nil || (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.ForceQuery || strings.Contains(explicit, "#") {
+		return "", fmt.Errorf("advertise URL must be a pure origin")
+	}
+	if strings.HasSuffix(parsed.Host, ":") {
+		return "", fmt.Errorf("advertise URL port is invalid")
+	}
+	if port := parsed.Port(); port != "" {
+		value, err := strconv.Atoi(port)
+		if err != nil || value < 1 || value > 65535 {
+			return "", fmt.Errorf("advertise URL port is invalid")
+		}
+	}
+	if ip, err := netip.ParseAddr(parsed.Hostname()); err == nil && ip.IsUnspecified() {
+		return "", fmt.Errorf("advertise URL must not use an unspecified IP address")
+	}
+	parsed.Path = ""
+	parsed.RawPath = ""
+	return parsed.String(), nil
 }
 
 type bridgeRuntime struct {
@@ -69,14 +120,10 @@ func newRuntime(databasePath string, adapter codex.Adapter) (*bridgeRuntime, err
 
 func (r *bridgeRuntime) Close() error { return r.store.Close() }
 
-func pairingInvitationURL(listenAddress, token string) (string, error) {
-	baseURL := url.URL{Scheme: "http", Host: listenAddress}
-	if baseURL.Hostname() == "" || baseURL.Port() == "" {
-		return "", fmt.Errorf("invalid Bridge listen address %q", listenAddress)
-	}
+func pairingInvitationURL(advertiseBaseURL, token string) (string, error) {
 	invitation := url.URL{Scheme: "codex-remote", Host: "pair"}
 	query := invitation.Query()
-	query.Set("baseUrl", baseURL.String())
+	query.Set("baseUrl", advertiseBaseURL)
 	query.Set("token", token)
 	invitation.RawQuery = query.Encode()
 	return invitation.String(), nil
@@ -97,7 +144,7 @@ func runServe(options serveOptions) error {
 		return err
 	}
 	defer runtime.Close()
-	pairingLink, err := pairingInvitationURL(options.listen, runtime.pairingToken)
+	pairingLink, err := pairingInvitationURL(options.advertiseURL, runtime.pairingToken)
 	if err != nil {
 		return err
 	}
