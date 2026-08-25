@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -68,6 +69,19 @@ func newRuntime(databasePath string, adapter codex.Adapter) (*bridgeRuntime, err
 
 func (r *bridgeRuntime) Close() error { return r.store.Close() }
 
+func pairingInvitationURL(listenAddress, token string) (string, error) {
+	baseURL := url.URL{Scheme: "http", Host: listenAddress}
+	if baseURL.Hostname() == "" || baseURL.Port() == "" {
+		return "", fmt.Errorf("invalid Bridge listen address %q", listenAddress)
+	}
+	invitation := url.URL{Scheme: "codex-remote", Host: "pair"}
+	query := invitation.Query()
+	query.Set("baseUrl", baseURL.String())
+	query.Set("token", token)
+	invitation.RawQuery = query.Encode()
+	return invitation.String(), nil
+}
+
 func runServe(options serveOptions) error {
 	if err := os.MkdirAll(filepath.Dir(options.data), 0o700); err != nil {
 		return err
@@ -83,6 +97,10 @@ func runServe(options serveOptions) error {
 		return err
 	}
 	defer runtime.Close()
+	pairingLink, err := pairingInvitationURL(options.listen, runtime.pairingToken)
+	if err != nil {
+		return err
+	}
 
 	server := &http.Server{
 		Addr: options.listen, Handler: runtime.handler,
@@ -99,6 +117,7 @@ func runServe(options serveOptions) error {
 
 	fmt.Printf("Bridge listening on http://%s\n", options.listen)
 	fmt.Printf("One-time pairing token (expires in 5 minutes): %s\n", runtime.pairingToken)
+	fmt.Printf("Pairing link: %s\n", pairingLink)
 	err = server.ListenAndServe()
 	if err == http.ErrServerClosed {
 		return nil
