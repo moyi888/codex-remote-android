@@ -3,6 +3,7 @@ module github.com/moyi888/codex-remote-android/bridge
 go 1.24.2
 
 require (
+	github.com/coder/websocket v1.8.13 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
