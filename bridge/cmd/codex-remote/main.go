@@ -111,7 +111,15 @@ func validAdvertiseHost(host string) bool {
 	if len(host) == 0 || len(host) > 253 {
 		return false
 	}
-	for _, label := range strings.Split(host, ".") {
+	labels := strings.Split(host, ".")
+	allNumeric := true
+	for _, label := range labels {
+		allNumeric = allNumeric && isASCIIDigits(label)
+	}
+	if allNumeric || (len(labels) > 1 && isASCIIDigits(labels[len(labels)-1])) {
+		return false
+	}
+	for _, label := range labels {
 		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
 			return false
 		}
@@ -121,6 +129,18 @@ func validAdvertiseHost(host string) bool {
 				(character < '0' || character > '9') && character != '-' {
 				return false
 			}
+		}
+	}
+	return true
+}
+
+func isASCIIDigits(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, character := range value {
+		if character < '0' || character > '9' {
+			return false
 		}
 	}
 	return true
