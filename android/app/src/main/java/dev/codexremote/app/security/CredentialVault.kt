@@ -6,7 +6,6 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import dev.codexremote.app.protocol.StoredBridgeConnection
 import java.security.KeyStore
-import java.security.SecureRandom
 import java.util.Base64
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -34,8 +33,7 @@ class CredentialVault(
     private val secretBox: SecretBox,
     private val json: Json = Json,
 ) {
-    @Synchronized
-    fun save(connection: StoredBridgeConnection) {
+    fun save(connection: StoredBridgeConnection) = synchronized(VAULT_LOCK) {
         val encrypted = try {
             secretBox.seal(json.encodeToString(connection).encodeToByteArray())
         } catch (_: Exception) {
@@ -48,15 +46,14 @@ class CredentialVault(
         }
     }
 
-    @Synchronized
-    fun load(): StoredBridgeConnection? {
+    fun load(): StoredBridgeConnection? = synchronized(VAULT_LOCK) {
         val encrypted = try {
             storage.get()
         } catch (_: Exception) {
-            return null
-        } ?: return null
+            return@synchronized null
+        } ?: return@synchronized null
 
-        return try {
+        try {
             json.decodeFromString(secretBox.open(encrypted).decodeToString())
         } catch (_: Exception) {
             try {
@@ -68,8 +65,7 @@ class CredentialVault(
         }
     }
 
-    @Synchronized
-    fun clear() {
+    fun clear() = synchronized(VAULT_LOCK) {
         try {
             storage.remove()
         } catch (_: Exception) {
@@ -78,6 +74,8 @@ class CredentialVault(
     }
 
     companion object {
+        private val VAULT_LOCK = Any()
+
         fun create(context: Context): CredentialVault = CredentialVault(
             storage = SharedPreferencesKeyValueStorage(context.applicationContext),
             secretBox = AndroidKeystoreSecretBox(),
@@ -111,27 +109,44 @@ class SharedPreferencesKeyValueStorage(context: Context) : KeyValueStorage {
     }
 }
 
-class AndroidKeystoreSecretBox : SecretBox {
-    override fun seal(plaintext: ByteArray): String = synchronized(KEYSTORE_LOCK) {
-        val iv = ByteArray(IV_LENGTH_BYTES).also(SECURE_RANDOM::nextBytes)
+internal class AesGcmCodec(private val key: SecretKey) {
+    fun seal(plaintext: ByteArray): String {
         val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey(), GCMParameterSpec(TAG_LENGTH_BITS, iv))
-        listOf(
+        cipher.init(Cipher.ENCRYPT_MODE, key)
+        return listOf(
             FORMAT_VERSION,
-            Base64.getEncoder().encodeToString(iv),
+            Base64.getEncoder().encodeToString(cipher.iv),
             Base64.getEncoder().encodeToString(cipher.doFinal(plaintext)),
         ).joinToString(SEPARATOR)
     }
 
-    override fun open(ciphertext: String): ByteArray = synchronized(KEYSTORE_LOCK) {
+    fun open(ciphertext: String): ByteArray {
         val parts = ciphertext.split(SEPARATOR, limit = 3)
         require(parts.size == 3 && parts[0] == FORMAT_VERSION) { "Unsupported encrypted value" }
         val iv = Base64.getDecoder().decode(parts[1])
         require(iv.size == IV_LENGTH_BYTES) { "Invalid encrypted value" }
         val encrypted = Base64.getDecoder().decode(parts[2])
         val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(), GCMParameterSpec(TAG_LENGTH_BITS, iv))
-        cipher.doFinal(encrypted)
+        cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(TAG_LENGTH_BITS, iv))
+        return cipher.doFinal(encrypted)
+    }
+
+    private companion object {
+        const val TRANSFORMATION = "AES/GCM/NoPadding"
+        const val FORMAT_VERSION = "v1"
+        const val SEPARATOR = "."
+        const val TAG_LENGTH_BITS = 128
+        const val IV_LENGTH_BYTES = 12
+    }
+}
+
+class AndroidKeystoreSecretBox : SecretBox {
+    override fun seal(plaintext: ByteArray): String = synchronized(KEYSTORE_LOCK) {
+        AesGcmCodec(getOrCreateKey()).seal(plaintext)
+    }
+
+    override fun open(ciphertext: String): ByteArray = synchronized(KEYSTORE_LOCK) {
+        AesGcmCodec(getOrCreateKey()).open(ciphertext)
     }
 
     private fun getOrCreateKey(): SecretKey {
@@ -156,14 +171,8 @@ class AndroidKeystoreSecretBox : SecretBox {
 
     private companion object {
         val KEYSTORE_LOCK = Any()
-        val SECURE_RANDOM = SecureRandom()
         const val KEYSTORE_PROVIDER = "AndroidKeyStore"
         const val KEY_ALIAS = "dev.codexremote.app.bridge_credentials"
-        const val TRANSFORMATION = "AES/GCM/NoPadding"
-        const val FORMAT_VERSION = "v1"
-        const val SEPARATOR = "."
         const val KEY_SIZE_BITS = 256
-        const val TAG_LENGTH_BITS = 128
-        const val IV_LENGTH_BYTES = 12
     }
 }
