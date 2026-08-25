@@ -69,6 +69,7 @@ class BridgeHttpClientTest {
                 """
                 {
                   "protocolVersion": 1,
+                  "eventCursor": 42,
                   "capabilities": {
                     "readThreads": true,
                     "startTask": true,
@@ -100,6 +101,7 @@ class BridgeHttpClientTest {
 
         val snapshot = client.snapshot(baseUrl(), credential)
 
+        assertEquals(42L, snapshot.eventCursor)
         assertTrue(snapshot.capabilities.readThreads)
         assertEquals("gpt-test", snapshot.models.single().id)
         assertEquals("high", snapshot.models.single().reasoningOptions.single().id)

@@ -10,6 +10,30 @@ import org.junit.Test
 
 class ModelsTest {
     @Test
+    fun decodesSnapshotEventCursor() {
+        val raw = """
+            {
+              "protocolVersion": 1,
+              "eventCursor": 42,
+              "capabilities": {
+                "readThreads": true,
+                "startTask": true,
+                "sendTurn": true,
+                "steer": true,
+                "stopTurn": true
+              },
+              "projects": [],
+              "models": [],
+              "threads": []
+            }
+        """.trimIndent()
+
+        val snapshot = Json.decodeFromString<Snapshot>(raw)
+
+        assertEquals(42L, snapshot.eventCursor)
+    }
+
+    @Test
     fun storedConnectionToStringDoesNotExposeCredential() {
         val secret = "credential-do-not-leak"
 

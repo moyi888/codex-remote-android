@@ -69,15 +69,94 @@ func TestSnapshotRequiresAuthenticationAndPairingGrantsAccess(t *testing.T) {
 		t.Fatalf("authenticated status = %d", response.StatusCode)
 	}
 	var snapshot struct {
-		ProtocolVersion int   `json:"protocolVersion"`
-		Projects        []any `json:"projects"`
-		Models          []any `json:"models"`
+		ProtocolVersion int    `json:"protocolVersion"`
+		EventCursor     uint64 `json:"eventCursor"`
+		Projects        []any  `json:"projects"`
+		Models          []any  `json:"models"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.ProtocolVersion != 1 || len(snapshot.Projects) != 1 || len(snapshot.Models) != 1 {
+	if snapshot.ProtocolVersion != 1 || snapshot.EventCursor != 0 || len(snapshot.Projects) != 1 || len(snapshot.Models) != 1 {
 		t.Fatalf("unexpected snapshot: %+v", snapshot)
+	}
+}
+
+func TestSnapshotIncludesLatestPublishedEventCursor(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "bridge.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	pairing := auth.NewPairingService(db, time.Now)
+	token, err := pairing.Issue(5 * time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	broker := events.NewBroker(db, time.Now)
+	if _, err := broker.Publish("thread.updated", json.RawMessage(`{"id":"thread-1"}`)); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(NewServer(pairing, codex.NewFakeAdapter(), WithEvents(broker)).Handler())
+	defer server.Close()
+	credential := exchangeCredential(t, server.URL, token)
+
+	request, _ := http.NewRequest(http.MethodGet, server.URL+"/v1/snapshot", nil)
+	request.Header.Set("Authorization", "Device phone-1:"+credential)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var snapshot struct {
+		EventCursor uint64 `json:"eventCursor"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK || snapshot.EventCursor != 1 {
+		t.Fatalf("snapshot status=%d eventCursor=%d, want status=200 eventCursor=1", response.StatusCode, snapshot.EventCursor)
+	}
+}
+
+func TestSnapshotReturnsSafeBadGatewayWhenEventCursorFails(t *testing.T) {
+	authDB, err := store.Open(filepath.Join(t.TempDir(), "auth.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer authDB.Close()
+	pairing := auth.NewPairingService(authDB, time.Now)
+	token, err := pairing.Issue(5 * time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventDB, err := store.Open(filepath.Join(t.TempDir(), "events.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	broker := events.NewBroker(eventDB, time.Now)
+	if err := eventDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(NewServer(pairing, codex.NewFakeAdapter(), WithEvents(broker)).Handler())
+	defer server.Close()
+	credential := exchangeCredential(t, server.URL, token)
+
+	request, _ := http.NewRequest(http.MethodGet, server.URL+"/v1/snapshot", nil)
+	request.Header.Set("Authorization", "Device phone-1:"+credential)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var body struct {
+		Error string `json:"error"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusBadGateway || body.Error != "failed to read event cursor" {
+		t.Fatalf("snapshot status=%d body=%+v", response.StatusCode, body)
 	}
 }
 
