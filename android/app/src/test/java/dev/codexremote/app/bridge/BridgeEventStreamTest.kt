@@ -6,6 +6,7 @@ import dev.codexremote.app.protocol.EventEnvelope
 import dev.codexremote.app.protocol.Snapshot
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlinx.serialization.json.JsonObject
@@ -265,6 +266,111 @@ class BridgeEventStreamTest {
     }
 
     @Test
+    fun concurrentDisposeCloseAndConnectUseStableDisposedResult() {
+        val factory = ControlledWebSocketFactory()
+        val stream = newControlledStream(factory, listener = RecordingListener())
+        stream.connect()
+        val start = CountDownLatch(1)
+        val failures = ConcurrentLinkedQueue<Throwable>()
+        val executor = Executors.newFixedThreadPool(3)
+        try {
+            val operations = listOf(
+                executor.submit {
+                    start.await()
+                    repeat(100) { stream.dispose() }
+                },
+                executor.submit {
+                    start.await()
+                    repeat(100) { stream.close() }
+                },
+                executor.submit {
+                    start.await()
+                    repeat(100) {
+                        try {
+                            stream.connect()
+                        } catch (error: IllegalStateException) {
+                            if (error.message != DISPOSED_MESSAGE) failures += error
+                        } catch (error: Throwable) {
+                            failures += error
+                        }
+                    }
+                },
+            )
+
+            start.countDown()
+            operations.forEach { it.get(TIMEOUT_SECONDS, TimeUnit.SECONDS) }
+
+            assertTrue(failures.toList().joinToString().orEmpty(), failures.isEmpty())
+            stream.dispose()
+            stream.close()
+            try {
+                stream.connect()
+                throw AssertionError("connect after dispose must fail")
+            } catch (error: IllegalStateException) {
+                assertEquals(DISPOSED_MESSAGE, error.message)
+            }
+        } finally {
+            start.countDown()
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun cursorSaveReentrancyCannotOverwriteNewGenerationCursor() {
+        val factory = ControlledWebSocketFactory()
+        lateinit var stream: BridgeEventStream
+        val cursorStore = ReconnectingCursorStore(
+            reconnect = {
+                stream.close()
+                stream.connect()
+            },
+        )
+        val listener = RecordingListener(expectedEvents = 2)
+        stream = newControlledStream(factory, cursorStore, listener = listener)
+        stream.connect()
+        factory.connections.single().open()
+
+        factory.connections.single().message(event(1, "first"))
+        assertTrue(cursorStore.reconnected.await(TIMEOUT_SECONDS, TimeUnit.SECONDS))
+        assertEquals(2, factory.connections.size)
+        factory.connections[1].open()
+        factory.connections[1].message(event(51, "second"))
+
+        assertTrue(listener.eventsArrived.await(TIMEOUT_SECONDS, TimeUnit.SECONDS))
+        stream.close()
+        assertEquals(listOf("first", "second"), listener.events.map { it.type })
+        assertEquals(listOf(1L, 51L), cursorStore.saved)
+    }
+
+    @Test
+    fun snapshotLoaderReentrancyCannotDeliverOrSaveOldSnapshotOrCloseNewSocket() {
+        val factory = ControlledWebSocketFactory()
+        val cursorStore = InMemoryCursorStore()
+        lateinit var stream: BridgeEventStream
+        val reconnected = CountDownLatch(1)
+        val snapshotLoader = SnapshotLoader {
+            stream.close()
+            stream.connect()
+            reconnected.countDown()
+            snapshot(9)
+        }
+        val listener = RecordingListener()
+        stream = newControlledStream(factory, cursorStore, snapshotLoader, listener)
+        stream.connect()
+        factory.connections.single().open()
+
+        factory.connections.single().message(event(2, "gap"))
+        assertTrue(reconnected.await(TIMEOUT_SECONDS, TimeUnit.SECONDS))
+        stream.connect()
+
+        assertEquals(2, factory.connections.size)
+        assertTrue(listener.snapshots.isEmpty())
+        assertTrue(cursorStore.saved.isEmpty())
+        assertEquals(0, factory.connections[1].webSocket.closeCalls)
+        assertEquals(0, factory.connections[1].webSocket.cancelCalls)
+    }
+
+    @Test
     fun deliversNextEventBeforeSavingItsCursor() {
         server.enqueue(webSocketResponse(messages = listOf(event(1, "thread.updated"))))
         val cursorStore = InMemoryCursorStore()
@@ -480,6 +586,31 @@ class BridgeEventStreamTest {
         }
     }
 
+    private class ReconnectingCursorStore(
+        private val reconnect: () -> Unit,
+    ) : CursorStore {
+        private var loadCalls = 0
+        private var didReconnect = false
+        val saved = CopyOnWriteArrayList<Long>()
+        val reconnected = CountDownLatch(1)
+
+        override fun load(): Long {
+            loadCalls += 1
+            return if (loadCalls == 1) 0 else 50
+        }
+
+        override fun save(cursor: Long) {
+            saved += cursor
+            if (!didReconnect) {
+                didReconnect = true
+                reconnect()
+                reconnected.countDown()
+            }
+        }
+
+        override fun clear() = Unit
+    }
+
     private class RecordingSnapshotLoader(private val snapshot: Snapshot) : SnapshotLoader {
         @Volatile
         var calls = 0
@@ -598,5 +729,6 @@ class BridgeEventStreamTest {
 
     private companion object {
         const val TIMEOUT_SECONDS = 3L
+        const val DISPOSED_MESSAGE = "Bridge event stream has been disposed"
     }
 }
