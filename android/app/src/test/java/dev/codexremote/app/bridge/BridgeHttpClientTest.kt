@@ -205,6 +205,33 @@ class BridgeHttpClientTest {
     }
 
     @Test
+    fun pairingExchangeDoesNotRetryServiceUnavailableResponse() {
+        val tokenSecret = "token-do-not-leak"
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(503)
+                .setHeader("Retry-After", "0"),
+        )
+        server.enqueue(
+            jsonResponse(
+                """{"protocolVersion":1,"deviceId":"phone-1","credential":"credential-1"}""",
+            ),
+        )
+        val invitation = PairingInvitation.parse(
+            "codex-remote://pair?baseUrl=${encodedBaseUrl()}&token=$tokenSecret",
+        )
+
+        try {
+            client.exchange(invitation, "phone-1", "Pixel")
+            fail("service unavailable response must throw")
+        } catch (error: BridgeApiException) {
+            assertEquals(503, error.statusCode)
+            assertEquals(1, server.requestCount)
+            assertFalse(error.toString().contains(tokenSecret))
+        }
+    }
+
+    @Test
     fun malformedSuccessResponseDoesNotExposeRawJson() {
         val responseSecret = "credential-do-not-leak"
         server.enqueue(
