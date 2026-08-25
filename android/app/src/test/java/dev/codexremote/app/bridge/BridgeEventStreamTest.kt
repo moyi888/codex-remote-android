@@ -551,6 +551,10 @@ class BridgeEventStreamTest {
                 onOpen()
                 messages.forEach { message -> webSocket.send(message) }
             }
+
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                webSocket.close(code, reason)
+            }
         },
     )
 
