@@ -3,6 +3,9 @@ package dev.codexremote.app.security
 import dev.codexremote.app.protocol.DeviceCredential
 import dev.codexremote.app.protocol.StoredBridgeConnection
 import java.util.Base64
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -63,6 +66,45 @@ class CredentialVaultTest {
         assertNull(storage.value)
     }
 
+    @Test
+    fun vaultInstancesSerializeLoadCleanupAndSaveForSharedStorage() {
+        val storage = InMemoryKeyValueStorage("corrupted")
+        val loadEntered = CountDownLatch(1)
+        val releaseLoad = CountDownLatch(1)
+        val saveAttempted = CountDownLatch(1)
+        val saveEntered = CountDownLatch(1)
+        val loadingVault = CredentialVault(
+            storage,
+            BlockingFailingSecretBox(loadEntered, releaseLoad),
+        )
+        val savingVault = CredentialVault(storage, SignalingSecretBox(saveEntered))
+        val saved = StoredBridgeConnection(
+            baseUrl = "https://new-bridge.example",
+            credential = DeviceCredential(1, "phone-2", "new-credential"),
+        )
+        val executor = Executors.newFixedThreadPool(2)
+
+        try {
+            val load = executor.submit<StoredBridgeConnection?> { loadingVault.load() }
+            assertEquals(true, loadEntered.await(1, TimeUnit.SECONDS))
+            val save = executor.submit<Unit> {
+                saveAttempted.countDown()
+                savingVault.save(saved)
+            }
+
+            assertEquals(true, saveAttempted.await(1, TimeUnit.SECONDS))
+            assertFalse(saveEntered.await(200, TimeUnit.MILLISECONDS))
+            releaseLoad.countDown()
+
+            assertNull(load.get(1, TimeUnit.SECONDS))
+            save.get(1, TimeUnit.SECONDS)
+            assertEquals(saved, savingVault.load())
+        } finally {
+            releaseLoad.countDown()
+            executor.shutdownNow()
+        }
+    }
+
     private class InMemoryKeyValueStorage(initialValue: String? = null) : KeyValueStorage {
         var value: String? = initialValue
 
@@ -87,5 +129,30 @@ class CredentialVaultTest {
         private companion object {
             const val MASK = 0x5a
         }
+    }
+
+    private class BlockingFailingSecretBox(
+        private val entered: CountDownLatch,
+        private val release: CountDownLatch,
+    ) : SecretBox {
+        override fun seal(plaintext: ByteArray): String = error("not used")
+
+        override fun open(ciphertext: String): ByteArray {
+            entered.countDown()
+            check(release.await(1, TimeUnit.SECONDS)) { "test did not release blocked load" }
+            throw IllegalArgumentException("corrupted")
+        }
+    }
+
+    private class SignalingSecretBox(
+        private val sealEntered: CountDownLatch,
+        private val delegate: SecretBox = XorSecretBox(),
+    ) : SecretBox {
+        override fun seal(plaintext: ByteArray): String {
+            sealEntered.countDown()
+            return delegate.seal(plaintext)
+        }
+
+        override fun open(ciphertext: String): ByteArray = delegate.open(ciphertext)
     }
 }
