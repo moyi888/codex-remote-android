@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -116,6 +117,70 @@ func TestSnapshotIncludesLatestPublishedEventCursor(t *testing.T) {
 	}
 	if response.StatusCode != http.StatusOK || snapshot.EventCursor != 1 {
 		t.Fatalf("snapshot status=%d eventCursor=%d, want status=200 eventCursor=1", response.StatusCode, snapshot.EventCursor)
+	}
+}
+
+func TestSnapshotCursorPrecedesStateReadWindow(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "bridge.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	pairing := auth.NewPairingService(db, time.Now)
+	token, err := pairing.Issue(5 * time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	broker := events.NewBroker(db, time.Now)
+	adapter := &blockingSnapshotAdapter{
+		Adapter:             codex.NewFakeAdapter(),
+		listThreadsStarted:  make(chan struct{}),
+		continueListThreads: make(chan struct{}),
+	}
+	server := httptest.NewServer(NewServer(pairing, adapter, WithEvents(broker)).Handler())
+	defer server.Close()
+	credential := exchangeCredential(t, server.URL, token)
+
+	type result struct {
+		response *http.Response
+		err      error
+	}
+	resultChannel := make(chan result, 1)
+	go func() {
+		request, _ := http.NewRequest(http.MethodGet, server.URL+"/v1/snapshot", nil)
+		request.Header.Set("Authorization", "Device phone-1:"+credential)
+		response, err := http.DefaultClient.Do(request)
+		resultChannel <- result{response: response, err: err}
+	}()
+
+	select {
+	case <-adapter.listThreadsStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("snapshot did not enter ListThreads")
+	}
+	if _, err := broker.Publish("thread.updated", json.RawMessage(`{"id":"thread-1"}`)); err != nil {
+		t.Fatal(err)
+	}
+	close(adapter.continueListThreads)
+
+	var requestResult result
+	select {
+	case requestResult = <-resultChannel:
+	case <-time.After(5 * time.Second):
+		t.Fatal("snapshot request did not complete")
+	}
+	if requestResult.err != nil {
+		t.Fatal(requestResult.err)
+	}
+	defer requestResult.response.Body.Close()
+	var snapshot struct {
+		EventCursor uint64 `json:"eventCursor"`
+	}
+	if err := json.NewDecoder(requestResult.response.Body).Decode(&snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if requestResult.response.StatusCode != http.StatusOK || snapshot.EventCursor != 0 {
+		t.Fatalf("snapshot status=%d eventCursor=%d, want status=200 eventCursor=0", requestResult.response.StatusCode, snapshot.EventCursor)
 	}
 }
 
@@ -302,4 +367,20 @@ func exchangeCredential(t *testing.T, serverURL, token string) string {
 		t.Fatal(err)
 	}
 	return paired.Credential
+}
+
+type blockingSnapshotAdapter struct {
+	codex.Adapter
+	listThreadsStarted  chan struct{}
+	continueListThreads chan struct{}
+}
+
+func (a *blockingSnapshotAdapter) ListThreads(ctx context.Context) ([]domain.ThreadSummary, error) {
+	close(a.listThreadsStarted)
+	select {
+	case <-a.continueListThreads:
+		return nil, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
