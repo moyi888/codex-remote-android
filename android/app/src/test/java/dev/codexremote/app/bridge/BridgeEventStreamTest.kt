@@ -35,6 +35,7 @@ class BridgeEventStreamTest {
 
     @After
     fun tearDown() {
+        httpClient.dispatcher.cancelAll()
         server.shutdown()
         httpClient.dispatcher.executorService.shutdownNow()
         httpClient.connectionPool.evictAll()
@@ -247,7 +248,7 @@ class BridgeEventStreamTest {
         object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 onOpen()
-                messages.forEach(webSocket::send)
+                messages.forEach { message -> webSocket.send(message) }
             }
         },
     )
