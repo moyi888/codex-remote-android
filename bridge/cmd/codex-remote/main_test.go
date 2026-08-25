@@ -130,6 +130,39 @@ func TestParseServeOptionsAcceptsPunycodeAdvertiseHost(t *testing.T) {
 	}
 }
 
+func TestNormalizeAdvertiseURLRejectsAmbiguousNumericHosts(t *testing.T) {
+	invalidHosts := []string{
+		"999.999.999.999",
+		"1.2.3",
+		"bridge.123",
+	}
+	for _, host := range invalidHosts {
+		t.Run(host, func(t *testing.T) {
+			if _, err := normalizeAdvertiseURL("127.0.0.1:8787", "https://"+host); err == nil {
+				t.Fatalf("expected ambiguous numeric host %q to be rejected", host)
+			}
+		})
+	}
+}
+
+func TestNormalizeAdvertiseURLAcceptsValidIPAndDNSHosts(t *testing.T) {
+	validURLs := []string{
+		"http://100.88.10.20:8787",
+		"https://bridge-1.tailnet.ts.net",
+	}
+	for _, advertiseURL := range validURLs {
+		t.Run(advertiseURL, func(t *testing.T) {
+			got, err := normalizeAdvertiseURL("127.0.0.1:8787", advertiseURL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != advertiseURL {
+				t.Fatalf("normalizeAdvertiseURL() = %q, want %q", got, advertiseURL)
+			}
+		})
+	}
+}
+
 func TestPairingOutputWithoutAdvertiseURLKeepsTokenAndExplainsMissingLink(t *testing.T) {
 	got, err := pairingOutput("", "one-time-secret")
 	if err != nil {
