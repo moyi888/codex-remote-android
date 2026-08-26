@@ -2,6 +2,7 @@
 .idea/
 .mise.local.toml
 .superpowers/
+.worktrees/
 docs/
 **/.gradle/
 **/build/
