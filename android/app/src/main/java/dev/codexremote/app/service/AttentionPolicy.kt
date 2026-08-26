@@ -1,5 +1,6 @@
 package dev.codexremote.app.service
 
+import dev.codexremote.app.protocol.Attention
 import dev.codexremote.app.protocol.EventEnvelope
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -18,10 +19,24 @@ internal object AttentionPolicy {
             else -> envelope.payload[ATTENTION_FIELD] as? JsonObject
         } ?: return null
         val category = (attention[CATEGORY_FIELD] as? JsonPrimitive)?.content ?: return null
-        if (category !in BROWSER_ATTENTION_CATEGORIES) return null
         val confidence = (attention[CONFIDENCE_FIELD] as? JsonPrimitive)?.doubleOrNull ?: return null
-        if (confidence < MINIMUM_CONFIDENCE) return null
-        val site = ((attention[SITE_FIELD] as? JsonPrimitive)?.content).orEmpty().safeSite()
+        val site = (attention[SITE_FIELD] as? JsonPrimitive)?.content.orEmpty()
+        return createNotice(category, site, confidence)
+    }
+
+    fun fromAttention(attention: Attention): AttentionNotice? = createNotice(
+        attention.category,
+        attention.site,
+        attention.confidence,
+    )
+
+    private fun createNotice(
+        category: String,
+        unsafeSite: String,
+        confidence: Double,
+    ): AttentionNotice? {
+        if (category !in BROWSER_ATTENTION_CATEGORIES || confidence < MINIMUM_CONFIDENCE) return null
+        val site = unsafeSite.safeSite()
         val target = if (site == null) "第三方页面" else site
         return AttentionNotice(
             title = "需要在电脑上完成授权",
