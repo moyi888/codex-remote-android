@@ -86,3 +86,8 @@ internal object AttentionPolicy {
         "third_party_login",
     )
 }
+
+object BrowserAttentionText {
+    fun fromAttention(attention: Attention): String? =
+        AttentionPolicy.fromAttention(attention)?.body
+}

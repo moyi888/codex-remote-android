@@ -104,6 +104,9 @@ class MainActivity : ComponentActivity() {
             val result = action()
             postToActiveActivity {
                 deliveryMessage = result.userMessage()
+                if (result == CommandDelivery.AuthenticationRequired) {
+                    loadResult = LoadResult.Unpaired
+                }
                 busy = false
             }
         }

@@ -34,7 +34,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import dev.codexremote.app.protocol.Attention
 import dev.codexremote.app.protocol.ThreadState
 import dev.codexremote.app.protocol.ThreadSummary
 
@@ -198,7 +197,7 @@ private fun ThreadList(
                     Text(thread.title, fontWeight = FontWeight.SemiBold)
                     Text("${thread.projectName} · ${thread.state.label()}")
                     Text(thread.updatedAt, style = MaterialTheme.typography.bodySmall)
-                    thread.attention?.let { AttentionNotice(it) }
+                    thread.attention?.let(ThreadAttentionMessage::from)?.let { AttentionNotice(it) }
                 }
             }
         }
@@ -221,7 +220,7 @@ private fun ThreadDetailScreen(
         Text("项目：${thread.projectName}")
         Text("状态：${thread.state.label()}")
         Text("更新时间：${thread.updatedAt}")
-        thread.attention?.let { AttentionNotice(it) }
+        thread.attention?.let(ThreadAttentionMessage::from)?.let { AttentionNotice(it) }
         HorizontalDivider()
         Text("当前 Bridge 协议暂不提供历史消息；这里显示任务摘要，并可继续下发新一轮。")
         OutlinedTextField(
@@ -330,10 +329,10 @@ private fun RadioOption(label: String, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun AttentionNotice(attention: Attention) {
+private fun AttentionNotice(message: String) {
     Spacer(Modifier.height(8.dp))
     Text(
-        "需要电脑操作：${attention.site.ifBlank { "第三方网站" }}。请打开向日葵完成授权，再回到 App 重试。",
+        message,
         color = MaterialTheme.colorScheme.error,
         style = MaterialTheme.typography.bodyMedium,
     )
