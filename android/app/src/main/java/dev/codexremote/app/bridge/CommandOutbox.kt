@@ -4,7 +4,8 @@ import dev.codexremote.app.protocol.CommandEnvelope
 import dev.codexremote.app.protocol.CommandResponse
 import dev.codexremote.app.protocol.StoredBridgeConnection
 import java.io.IOException
-import java.util.concurrent.ConcurrentHashMap
+import java.util.Collections
+import java.util.WeakHashMap
 
 sealed interface CommandOutboxResult {
     val command: QueuedCommand
@@ -32,17 +33,46 @@ sealed interface CommandOutboxResult {
 
 data class FlushResult(val outcomes: List<CommandOutboxResult>)
 
+sealed interface SendOrQueueResult {
+    val command: QueuedCommand
+    val drainOutcomes: List<CommandOutboxResult>
+
+    data class Attempted(
+        override val command: QueuedCommand,
+        val outcome: CommandOutboxResult,
+        override val drainOutcomes: List<CommandOutboxResult>,
+    ) : SendOrQueueResult
+
+    data class Blocked(
+        override val command: QueuedCommand,
+        val blocker: CommandOutboxResult,
+        override val drainOutcomes: List<CommandOutboxResult>,
+    ) : SendOrQueueResult
+}
+
 class CommandOutbox(
     private val queue: PendingCommandQueue,
     private val httpClient: BridgeHttpClient,
     private val connection: StoredBridgeConnection,
     private val clock: () -> String,
 ) {
-    fun sendOrQueue(command: CommandEnvelope): CommandOutboxResult = withDeviceLock(command.deviceId) {
-        queue.enqueue(command)
-        val outcomes = drain(command.deviceId)
-        outcomes.firstOrNull { it.command.matches(command) }
-            ?: blockedResult(command, outcomes.last())
+    fun sendOrQueue(command: CommandEnvelope): SendOrQueueResult {
+        val authenticatedDeviceId = connection.credential.deviceId
+        require(command.deviceId == authenticatedDeviceId) {
+            "Command device must match the authenticated device"
+        }
+        return withDeviceLock(authenticatedDeviceId) {
+            queue.enqueue(command)
+            val outcomes = drain(authenticatedDeviceId)
+            val queued = queue.list().firstOrNull { it.matches(command) }
+                ?: outcomes.first { it.command.matches(command) }.command
+            val target = outcomes.firstOrNull { it.command.matches(command) }
+            if (target != null) {
+                SendOrQueueResult.Attempted(queued, target, outcomes)
+            } else {
+                SendOrQueueResult.Blocked(queued, outcomes.last(), outcomes)
+            }
+        }
     }
 
     fun flush(): FlushResult = withDeviceLock(connection.credential.deviceId) {
@@ -95,24 +125,9 @@ class CommandOutbox(
     ): CommandOutboxResult = when {
         error.statusCode == 401 || error.statusCode == 403 ->
             CommandOutboxResult.AuthenticationRequired(attempted, error.statusCode)
-        error.statusCode in TERMINAL_CLIENT_ERRORS ->
-            CommandOutboxResult.Rejected(attempted, error.statusCode)
-        else -> CommandOutboxResult.Queued(attempted, error)
-    }
-
-    private fun blockedResult(
-        command: CommandEnvelope,
-        blockingOutcome: CommandOutboxResult,
-    ): CommandOutboxResult {
-        val queued = queue.list().first { it.matches(command) }
-        return when (blockingOutcome) {
-            is CommandOutboxResult.AuthenticationRequired ->
-                CommandOutboxResult.AuthenticationRequired(queued, blockingOutcome.statusCode)
-            is CommandOutboxResult.Queued -> CommandOutboxResult.Queued(queued, blockingOutcome.error)
-            is CommandOutboxResult.Sent,
-            is CommandOutboxResult.Rejected,
-            -> error("Command drain ended before reaching the newly queued command")
-        }
+        error.statusCode in RETRYABLE_STATUS_CODES || error.statusCode in 500..599 ->
+            CommandOutboxResult.Queued(attempted, error)
+        else -> CommandOutboxResult.Rejected(attempted, error.statusCode)
     }
 
     private fun send(command: CommandEnvelope): CommandResponse = httpClient.sendCommand(
@@ -130,11 +145,15 @@ class CommandOutbox(
         this.command.deviceId == command.deviceId &&
             this.command.idempotencyKey == command.idempotencyKey
 
-    private inline fun <T> withDeviceLock(deviceId: String, action: () -> T): T =
-        synchronized(DEVICE_LOCKS.computeIfAbsent(deviceId) { Any() }, action)
+    private inline fun <T> withDeviceLock(deviceId: String, action: () -> T): T {
+        val lock = synchronized(DEVICE_LOCKS) {
+            DEVICE_LOCKS.getOrPut(deviceId) { Any() }
+        }
+        return synchronized(lock, action)
+    }
 
     private companion object {
-        val TERMINAL_CLIENT_ERRORS = (400..499).toSet() - setOf(401, 403, 408, 409, 425, 429)
-        val DEVICE_LOCKS = ConcurrentHashMap<String, Any>()
+        val RETRYABLE_STATUS_CODES = setOf(408, 409, 425, 429)
+        val DEVICE_LOCKS: MutableMap<String, Any> = Collections.synchronizedMap(WeakHashMap())
     }
 }
