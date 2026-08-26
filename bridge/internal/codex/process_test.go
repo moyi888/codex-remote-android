@@ -66,6 +66,29 @@ func TestRPCProcessSkipsNotificationBeforeResponse(t *testing.T) {
 	}
 }
 
+func TestRPCProcessDeliversNotificationAfterResponse(t *testing.T) {
+	process, err := StartRPCProcess(context.Background(), os.Args[0], []string{"-test.run=TestRPCProcessDelayedNotificationHelper", "--"}, []string{"CODEX_REMOTE_DELAYED_NOTIFICATION_HELPER=1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer process.Close()
+
+	var result struct {
+		Echo string `json:"echo"`
+	}
+	if err := process.Call(context.Background(), "thread/list", nil, &result); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case notification := <-process.Notifications():
+		if notification.Method != "item/started" {
+			t.Fatalf("notification method = %q", notification.Method)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("response 后到达的通知未被持续读取")
+	}
+}
+
 func TestRPCProcessReportsUnexpectedExit(t *testing.T) {
 	process, err := StartRPCProcess(context.Background(), os.Args[0], []string{"-test.run=TestRPCProcessExitHelper", "--"}, []string{"CODEX_REMOTE_EXIT_HELPER=1"})
 	if err != nil {
@@ -136,6 +159,27 @@ func TestRPCProcessNotificationHelper(t *testing.T) {
 	fmt.Println(`{"method":"thread/status/changed","params":{"threadId":"thread-1"}}`)
 	fmt.Printf(`{"id":%d,"result":{"echo":%q}}`+"\n", request.ID, request.Method)
 	os.Exit(0)
+}
+
+func TestRPCProcessDelayedNotificationHelper(t *testing.T) {
+	if os.Getenv("CODEX_REMOTE_DELAYED_NOTIFICATION_HELPER") != "1" {
+		return
+	}
+	scanner := bufio.NewScanner(os.Stdin)
+	if !scanner.Scan() {
+		os.Exit(2)
+	}
+	var request struct {
+		ID     uint64 `json:"id"`
+		Method string `json:"method"`
+	}
+	if err := json.Unmarshal(scanner.Bytes(), &request); err != nil {
+		os.Exit(3)
+	}
+	fmt.Printf(`{"id":%d,"result":{"echo":%q}}`+"\n", request.ID, request.Method)
+	time.Sleep(100 * time.Millisecond)
+	fmt.Println(`{"method":"item/started","params":{"threadId":"thread-1"}}`)
+	_, _ = io.Copy(io.Discard, os.Stdin)
 }
 
 func TestRPCProcessExitHelper(t *testing.T) {

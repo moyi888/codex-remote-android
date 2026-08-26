@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
+
+	"github.com/moyi888/codex-remote-android/bridge/internal/domain"
 )
 
 type recordedCall struct {
@@ -106,5 +108,29 @@ func TestAppServerAdapterMapsMissingReasoningOptionsToEmptyArray(t *testing.T) {
 	}
 	if string(model.ReasoningOptions) != "[]" {
 		t.Fatalf("reasoningOptions = %s, want []", model.ReasoningOptions)
+	}
+}
+
+func TestAppServerAdapterMapsOfficialThreadRuntimeStatuses(t *testing.T) {
+	tests := []struct {
+		name   string
+		status string
+		want   domain.ThreadState
+	}{
+		{name: "active", status: `{"type":"active","activeFlags":[]}`, want: domain.ThreadRunning},
+		{name: "idle", status: `{"type":"idle"}`, want: domain.ThreadIdle},
+		{name: "not loaded", status: `{"type":"notLoaded"}`, want: domain.ThreadIdle},
+		{name: "system error", status: `{"type":"systemError"}`, want: domain.ThreadFailed},
+		{name: "legacy string", status: `"idle"`, want: domain.ThreadIdle},
+		{name: "unknown", status: `{"type":"futureStatus"}`, want: domain.ThreadDisconnected},
+		{name: "malformed", status: `{`, want: domain.ThreadDisconnected},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := threadStateFromStatus(json.RawMessage(test.status))
+			if got != test.want {
+				t.Fatalf("threadStateFromStatus(%s) = %q, want %q", test.status, got, test.want)
+			}
+		})
 	}
 }

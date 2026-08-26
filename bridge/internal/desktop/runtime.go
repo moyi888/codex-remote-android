@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -17,12 +18,14 @@ import (
 	"github.com/moyi888/codex-remote-android/bridge/internal/auth"
 	"github.com/moyi888/codex-remote-android/bridge/internal/codex"
 	"github.com/moyi888/codex-remote-android/bridge/internal/commands"
+	"github.com/moyi888/codex-remote-android/bridge/internal/domain"
 	"github.com/moyi888/codex-remote-android/bridge/internal/events"
 	"github.com/moyi888/codex-remote-android/bridge/internal/store"
 )
 
 type ManagedRPCTransport interface {
 	codex.RPCTransport
+	Notifications() <-chan codex.Notification
 	Done() <-chan error
 	Close() error
 }
@@ -99,6 +102,7 @@ func (f *HTTPBridgeFactory) Start(ctx context.Context, config BridgeConfig) (Bri
 		done:      make(chan error, 1),
 		cancel:    cancelRuntime,
 	}
+	go runtime.forwardNotifications(runtimeContext, broker, f.now)
 	go runtime.serve(runtimeContext)
 	failed = false
 	transportOwned = false
@@ -126,6 +130,31 @@ type httpBridge struct {
 	done      chan error
 	cancel    context.CancelFunc
 	closeOnce sync.Once
+}
+
+func (b *httpBridge) forwardNotifications(ctx context.Context, broker *events.Broker, now func() time.Time) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case notification, ok := <-b.transport.Notifications():
+			if !ok {
+				return
+			}
+			threadID, attention, detected := codex.AttentionFromNotification(notification, now())
+			if !detected {
+				continue
+			}
+			payload, err := json.Marshal(struct {
+				ID        string           `json:"id"`
+				Attention domain.Attention `json:"attention"`
+			}{ID: threadID, Attention: attention})
+			if err != nil {
+				continue
+			}
+			_, _ = broker.Publish("attention.required", payload)
+		}
+	}
 }
 
 func (b *httpBridge) Address() string { return b.address }

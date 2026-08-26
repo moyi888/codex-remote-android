@@ -2,6 +2,7 @@ package codex
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -93,16 +94,35 @@ func (a *AppServerAdapter) ListThreads(ctx context.Context) ([]domain.ThreadSumm
 		if project, ok := a.catalog.ProjectForPath(item.CWD); ok {
 			projectID, projectName = project.ID, project.DisplayName
 		}
-		state := domain.ThreadIdle
-		if string(item.Status) != `"idle"` && string(item.Status) != `{"type":"idle"}` {
-			state = domain.ThreadRunning
-		}
 		threads = append(threads, domain.ThreadSummary{
 			ID: item.ID, Title: title, ProjectID: projectID, ProjectName: projectName,
-			Source: domain.ThreadSourceAppServer, State: state, UpdatedAt: time.Unix(item.UpdatedAt, 0).UTC(),
+			Source: domain.ThreadSourceAppServer, State: threadStateFromStatus(item.Status), UpdatedAt: time.Unix(item.UpdatedAt, 0).UTC(),
 		})
 	}
 	return threads, nil
+}
+
+func threadStateFromStatus(raw json.RawMessage) domain.ThreadState {
+	var statusType string
+	if err := json.Unmarshal(raw, &statusType); err != nil {
+		var status struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(raw, &status); err != nil {
+			return domain.ThreadDisconnected
+		}
+		statusType = status.Type
+	}
+	switch statusType {
+	case "active":
+		return domain.ThreadRunning
+	case "idle", "notLoaded":
+		return domain.ThreadIdle
+	case "systemError":
+		return domain.ThreadFailed
+	default:
+		return domain.ThreadDisconnected
+	}
 }
 
 func (a *AppServerAdapter) StartTask(ctx context.Context, request StartTaskRequest) (domain.ThreadSummary, error) {

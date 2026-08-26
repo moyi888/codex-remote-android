@@ -41,6 +41,11 @@ type Notification struct {
 	Params json.RawMessage
 }
 
+type scanResult struct {
+	message rpcMessage
+	err     error
+}
+
 type RPCProcess struct {
 	cmd          *exec.Cmd
 	stdin        io.WriteCloser
@@ -48,6 +53,7 @@ type RPCProcess struct {
 	mu           sync.Mutex
 	nextID       uint64
 	notify       chan Notification
+	responses    chan scanResult
 	done         chan error
 	waitComplete chan struct{}
 	closeOnce    sync.Once
@@ -69,14 +75,37 @@ func StartRPCProcess(ctx context.Context, command string, args, environment []st
 	}
 	process := &RPCProcess{
 		cmd: cmd, stdin: stdin, scan: bufio.NewScanner(stdout), notify: make(chan Notification, 64),
-		done: make(chan error, 1), waitComplete: make(chan struct{}),
+		responses: make(chan scanResult, 64), done: make(chan error, 1), waitComplete: make(chan struct{}),
 	}
+	go process.readLoop()
 	go func() {
 		err := cmd.Wait()
 		process.done <- err
 		close(process.waitComplete)
 	}()
 	return process, nil
+}
+
+func (p *RPCProcess) readLoop() {
+	defer close(p.notify)
+	for p.scan.Scan() {
+		var message rpcMessage
+		if err := json.Unmarshal(p.scan.Bytes(), &message); err != nil {
+			p.responses <- scanResult{err: err}
+			return
+		}
+		if message.Method != "" {
+			select {
+			case p.notify <- Notification{Method: message.Method, Params: message.Params}:
+			default:
+			}
+			continue
+		}
+		if message.ID != nil {
+			p.responses <- scanResult{message: message}
+		}
+	}
+	p.responses <- scanResult{err: fmt.Errorf("app-server output closed: %w", p.scan.Err())}
 }
 
 func (p *RPCProcess) Notifications() <-chan Notification { return p.notify }
@@ -111,48 +140,25 @@ func (p *RPCProcess) Call(ctx context.Context, method string, params, result any
 		return err
 	}
 
-	type scanResult struct {
-		message rpcMessage
-		err     error
-	}
-	responseChannel := make(chan scanResult, 1)
-	go func() {
-		for p.scan.Scan() {
-			var message rpcMessage
-			if err := json.Unmarshal(p.scan.Bytes(), &message); err != nil {
-				responseChannel <- scanResult{err: err}
-				return
+	for {
+		select {
+		case <-ctx.Done():
+			if p.cmd.Process != nil {
+				_ = p.cmd.Process.Kill()
 			}
-			if message.Method != "" {
-				select {
-				case p.notify <- Notification{Method: message.Method, Params: message.Params}:
-				default:
-				}
+			return ctx.Err()
+		case scanned := <-p.responses:
+			if scanned.err != nil {
+				return scanned.err
+			}
+			if scanned.message.ID == nil || *scanned.message.ID != request.ID {
 				continue
 			}
-			if message.ID == nil || *message.ID != request.ID {
-				continue
+			if scanned.message.Error != nil {
+				return fmt.Errorf("app-server error %d: %s", scanned.message.Error.Code, scanned.message.Error.Message)
 			}
-			responseChannel <- scanResult{message: message}
-			return
+			return json.Unmarshal(scanned.message.Result, result)
 		}
-		responseChannel <- scanResult{err: fmt.Errorf("app-server output closed: %w", p.scan.Err())}
-	}()
-
-	select {
-	case <-ctx.Done():
-		if p.cmd.Process != nil {
-			_ = p.cmd.Process.Kill()
-		}
-		return ctx.Err()
-	case scanned := <-responseChannel:
-		if scanned.err != nil {
-			return scanned.err
-		}
-		if scanned.message.Error != nil {
-			return fmt.Errorf("app-server error %d: %s", scanned.message.Error.Code, scanned.message.Error.Message)
-		}
-		return json.Unmarshal(scanned.message.Result, result)
 	}
 }
 

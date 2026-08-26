@@ -8,8 +8,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/moyi888/codex-remote-android/bridge/internal/codex"
 )
 
 func TestHTTPBridgeFactoryStartsRuntimeAndServesHealth(t *testing.T) {
@@ -139,8 +142,58 @@ func TestHTTPBridgeContextCancellationClosesAllResources(t *testing.T) {
 	}
 }
 
+func TestHTTPBridgePublishesSanitizedBrowserAttention(t *testing.T) {
+	transport := newFakeManagedTransport()
+	factory := NewHTTPBridgeFactory(func(context.Context, string) (ManagedRPCTransport, error) {
+		return transport, nil
+	}, "test-version", func() time.Time {
+		return time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+	})
+	bridge, err := factory.Start(context.Background(), BridgeConfig{
+		ListenAddress: "127.0.0.1:0",
+		CodexPath:     `C:\Codex\codex.exe`,
+		DatabasePath:  filepath.Join(t.TempDir(), "bridge.db"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bridge.Close()
+
+	transport.incoming <- codex.Notification{
+		Method: "mcpServer/elicitation/request",
+		Params: json.RawMessage(`{
+			"threadId":"thread-1",
+			"mode":"url",
+			"url":"https://github.com/login/oauth?token=do-not-leak"
+		}`),
+	}
+	runtime := bridge.(*httpBridge)
+	deadline := time.Now().Add(time.Second)
+	for {
+		records, readErr := runtime.database.EventsAfter(0, 10)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if len(records) > 0 {
+			if records[0].Type != "attention.required" {
+				t.Fatalf("event type = %q", records[0].Type)
+			}
+			payload := string(records[0].Payload)
+			if !strings.Contains(payload, `"site":"github.com"`) || strings.Contains(payload, "do-not-leak") {
+				t.Fatalf("unsafe attention payload: %s", payload)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("app-server 浏览器授权通知未发布到事件流")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 type fakeManagedTransport struct {
 	done          chan error
+	incoming      chan codex.Notification
 	closed        chan struct{}
 	calls         int
 	notifications int
@@ -148,7 +201,9 @@ type fakeManagedTransport struct {
 }
 
 func newFakeManagedTransport() *fakeManagedTransport {
-	return &fakeManagedTransport{done: make(chan error, 1), closed: make(chan struct{})}
+	return &fakeManagedTransport{
+		done: make(chan error, 1), incoming: make(chan codex.Notification, 1), closed: make(chan struct{}),
+	}
 }
 
 func (f *fakeManagedTransport) Call(_ context.Context, method string, _ any, result any) error {
@@ -167,7 +222,8 @@ func (f *fakeManagedTransport) Notify(_ context.Context, method string, _ any) e
 	return nil
 }
 
-func (f *fakeManagedTransport) Done() <-chan error { return f.done }
+func (f *fakeManagedTransport) Done() <-chan error                       { return f.done }
+func (f *fakeManagedTransport) Notifications() <-chan codex.Notification { return f.incoming }
 func (f *fakeManagedTransport) Close() error {
 	f.closeCalls++
 	if f.closeCalls == 1 {
