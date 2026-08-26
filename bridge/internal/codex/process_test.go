@@ -75,8 +75,8 @@ func TestRPCProcessHelper(t *testing.T) {
 	}
 	var request struct {
 		JSONRPC string `json:"jsonrpc"`
-		ID     uint64 `json:"id"`
-		Method string `json:"method"`
+		ID      uint64 `json:"id"`
+		Method  string `json:"method"`
 	}
 	if err := json.Unmarshal(scanner.Bytes(), &request); err != nil {
 		os.Exit(3)
