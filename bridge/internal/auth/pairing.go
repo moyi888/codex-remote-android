@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"net/url"
 	"time"
 
 	"github.com/moyi888/codex-remote-android/bridge/internal/store"
@@ -15,6 +16,24 @@ import (
 type PairingService struct {
 	store *store.Store
 	now   func() time.Time
+}
+
+type PairingInvitation struct {
+	URL       string
+	ExpiresAt time.Time
+}
+
+func (s *PairingService) IssueInvitation(baseURL string, ttl time.Duration) (PairingInvitation, error) {
+	token, err := s.Issue(ttl)
+	if err != nil {
+		return PairingInvitation{}, err
+	}
+	invitation := url.URL{Scheme: "codex-remote", Host: "pair"}
+	query := invitation.Query()
+	query.Set("baseUrl", baseURL)
+	query.Set("token", token)
+	invitation.RawQuery = query.Encode()
+	return PairingInvitation{URL: invitation.String(), ExpiresAt: s.now().Add(ttl)}, nil
 }
 
 func NewPairingService(store *store.Store, now func() time.Time) *PairingService {
@@ -72,7 +91,14 @@ func (s *PairingService) Authenticate(deviceID, credential string) (bool, error)
 		return false, fmt.Errorf("invalid stored credential hash: %w", err)
 	}
 	gotSum := sha256.Sum256([]byte(credential))
-	return subtle.ConstantTimeCompare(want, gotSum[:]) == 1, nil
+	authenticated := subtle.ConstantTimeCompare(want, gotSum[:]) == 1
+	if !authenticated {
+		return false, nil
+	}
+	if err := s.store.TouchDevice(deviceID, s.now()); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func randomToken() (string, error) {

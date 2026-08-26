@@ -26,6 +26,14 @@ type Device struct {
 	Revoked        bool
 }
 
+type DeviceSummary struct {
+	ID         string
+	Name       string
+	CreatedAt  time.Time
+	LastSeenAt *time.Time
+	Revoked    bool
+}
+
 type EventRecord struct {
 	Cursor    uint64
 	Type      string
@@ -76,7 +84,7 @@ func (s *Store) Device(id string) (Device, error) {
 
 func (s *Store) RevokeDevice(id string) error {
 	result, err := s.db.Exec(
-		`UPDATE devices SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`,
+		`UPDATE devices SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ?`,
 		time.Now().UTC().Format(time.RFC3339Nano), id,
 	)
 	if err != nil {
@@ -90,6 +98,52 @@ func (s *Store) RevokeDevice(id string) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+func (s *Store) TouchDevice(id string, seenAt time.Time) error {
+	result, err := s.db.Exec(`UPDATE devices SET last_seen_at = ? WHERE id = ?`, seenAt.UTC().Format(time.RFC3339Nano), id)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) ListDevices() ([]DeviceSummary, error) {
+	rows, err := s.db.Query(`SELECT id, name, created_at, last_seen_at, revoked_at FROM devices ORDER BY created_at ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var devices []DeviceSummary
+	for rows.Next() {
+		var device DeviceSummary
+		var created string
+		var lastSeen, revoked sql.NullString
+		if err := rows.Scan(&device.ID, &device.Name, &created, &lastSeen, &revoked); err != nil {
+			return nil, err
+		}
+		device.CreatedAt, err = time.Parse(time.RFC3339Nano, created)
+		if err != nil {
+			return nil, err
+		}
+		if lastSeen.Valid {
+			value, parseErr := time.Parse(time.RFC3339Nano, lastSeen.String)
+			if parseErr != nil {
+				return nil, parseErr
+			}
+			device.LastSeenAt = &value
+		}
+		device.Revoked = revoked.Valid
+		devices = append(devices, device)
+	}
+	return devices, rows.Err()
 }
 
 func (s *Store) CreatePairingToken(tokenHash string, expiresAt time.Time) error {

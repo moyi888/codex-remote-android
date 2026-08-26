@@ -36,6 +36,34 @@ func TestDeviceLifecycle(t *testing.T) {
 	}
 }
 
+func TestListDevicesReturnsSafeActivitySummariesAndRevocationIsIdempotent(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "bridge.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.CreateDevice("phone-1", "Pixel", "secret-hash"); err != nil {
+		t.Fatal(err)
+	}
+	seenAt := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+	if err := db.TouchDevice("phone-1", seenAt); err != nil {
+		t.Fatal(err)
+	}
+	devices, err := db.ListDevices()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(devices) != 1 || devices[0].ID != "phone-1" || devices[0].Name != "Pixel" || devices[0].LastSeenAt == nil || !devices[0].LastSeenAt.Equal(seenAt) {
+		t.Fatalf("devices=%+v", devices)
+	}
+	if err := db.RevokeDevice("phone-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RevokeDevice("phone-1"); err != nil {
+		t.Fatalf("repeat revoke must be idempotent: %v", err)
+	}
+}
+
 func TestLatestEventCursorEmptyAndAfterEvents(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "bridge.db"))
 	if err != nil {
