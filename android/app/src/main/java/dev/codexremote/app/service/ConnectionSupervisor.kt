@@ -45,135 +45,247 @@ internal class ConnectionSupervisor(
     private val scheduler: RetryScheduler,
     private val statusListener: ConnectionStatusListener,
 ) {
+    private data class ActiveSession(
+        val generation: Long,
+        val value: ConnectionSession,
+    )
+
+    private data class RetryPlan(
+        val generation: Long,
+        val delayMillis: Long,
+    )
+
     private val lock = Any()
     private var running = false
     private var networkAvailable = false
     private var generation = 0L
     private var retryIndex = 0
-    private var session: ConnectionSession? = null
+    private var connectingGeneration: Long? = null
+    private var activeSession: ActiveSession? = null
+    private var retryPending = false
     private var scheduledRetry: ScheduledRetry? = null
 
-    fun start(networkAvailable: Boolean) = synchronized(lock) {
-        if (running) return@synchronized
-        running = true
-        this.networkAvailable = networkAvailable
-        if (networkAvailable) {
-            connectLocked()
-        } else {
-            publish(ConnectionStatus.WAITING_FOR_NETWORK)
+    fun start(networkAvailable: Boolean) {
+        val shouldConnect = synchronized(lock) {
+            if (running) return
+            running = true
+            this.networkAvailable = networkAvailable
+            networkAvailable
         }
+        if (shouldConnect) beginConnect() else publish(ConnectionStatus.WAITING_FOR_NETWORK)
     }
 
-    fun onNetworkAvailable() = synchronized(lock) {
-        if (!running || networkAvailable) return@synchronized
-        networkAvailable = true
-        retryIndex = 0
-        cancelRetryLocked()
-        connectLocked()
+    fun onNetworkAvailable() {
+        val cancelled: ScheduledRetry?
+        val shouldConnect: Boolean
+        synchronized(lock) {
+            if (!running || networkAvailable) return
+            networkAvailable = true
+            retryIndex = 0
+            generation += 1
+            retryPending = false
+            cancelled = scheduledRetry
+            scheduledRetry = null
+            shouldConnect = activeSession == null && connectingGeneration == null
+        }
+        cancel(cancelled)
+        if (shouldConnect) beginConnect()
     }
 
-    fun onNetworkUnavailable() = synchronized(lock) {
-        if (!running || !networkAvailable) return@synchronized
-        networkAvailable = false
-        cancelRetryLocked()
-        closeSessionLocked()
+    fun onNetworkUnavailable() {
+        val closing: ConnectionSession?
+        val cancelled: ScheduledRetry?
+        synchronized(lock) {
+            if (!running || !networkAvailable) return
+            networkAvailable = false
+            generation += 1
+            connectingGeneration = null
+            retryPending = false
+            cancelled = scheduledRetry
+            scheduledRetry = null
+            closing = activeSession?.value
+            activeSession = null
+        }
+        cancel(cancelled)
+        closeAndDispose(closing)
         publish(ConnectionStatus.WAITING_FOR_NETWORK)
     }
 
-    fun stop() = synchronized(lock) {
-        if (!running) return@synchronized
-        running = false
-        networkAvailable = false
-        cancelRetryLocked()
-        closeSessionLocked()
+    fun stop() {
+        val closing: ConnectionSession?
+        val cancelled: ScheduledRetry?
+        synchronized(lock) {
+            if (!running) return
+            running = false
+            networkAvailable = false
+            generation += 1
+            connectingGeneration = null
+            retryPending = false
+            cancelled = scheduledRetry
+            scheduledRetry = null
+            closing = activeSession?.value
+            activeSession = null
+        }
+        cancel(cancelled)
+        closeAndDispose(closing)
         publish(ConnectionStatus.STOPPED)
     }
 
     fun isRunning(): Boolean = synchronized(lock) { running }
 
-    private fun connectLocked() {
-        if (!running || !networkAvailable || session != null || scheduledRetry != null) return
-        val callbackGeneration = ++generation
+    private fun beginConnect() {
+        val connectionGeneration = synchronized(lock) {
+            if (
+                !running ||
+                !networkAvailable ||
+                activeSession != null ||
+                connectingGeneration != null ||
+                retryPending
+            ) {
+                return
+            }
+            (++generation).also { connectingGeneration = it }
+        }
+        publish(ConnectionStatus.CONNECTING)
         val created = try {
-            sessionFactory.create(callbacks(callbackGeneration))
+            sessionFactory.create(callbacks(connectionGeneration))
         } catch (_: Exception) {
-            scheduleRetryLocked()
+            scheduleAfterConnectionFailure(connectionGeneration)
             return
         }
-        session = created
-        publish(ConnectionStatus.CONNECTING)
+        val accepted = synchronized(lock) {
+            if (
+                running &&
+                networkAvailable &&
+                connectingGeneration == connectionGeneration &&
+                generation == connectionGeneration
+            ) {
+                connectingGeneration = null
+                activeSession = ActiveSession(connectionGeneration, created)
+                true
+            } else {
+                false
+            }
+        }
+        if (!accepted) {
+            closeAndDispose(created)
+            return
+        }
         try {
             created.connect()
         } catch (_: Exception) {
-            handleDisconnectLocked(callbackGeneration)
+            onSessionEnded(connectionGeneration)
         }
     }
 
-    private fun callbacks(callbackGeneration: Long) = object : ConnectionSessionCallbacks {
-        override fun onConnected() = synchronized(lock) {
-            if (!isCurrent(callbackGeneration)) return@synchronized
-            retryIndex = 0
-            publish(ConnectionStatus.CONNECTED)
+    private fun callbacks(connectionGeneration: Long) = object : ConnectionSessionCallbacks {
+        override fun onConnected() {
+            val accepted = synchronized(lock) {
+                val current = activeSession
+                if (!running || current?.generation != connectionGeneration) return@synchronized false
+                retryIndex = 0
+                true
+            }
+            if (accepted) publish(ConnectionStatus.CONNECTED)
         }
 
-        override fun onDisconnected() = synchronized(lock) {
-            handleDisconnectLocked(callbackGeneration)
-        }
+        override fun onDisconnected() = onSessionEnded(connectionGeneration)
 
-        override fun onFailure() = synchronized(lock) {
-            handleDisconnectLocked(callbackGeneration)
-        }
+        override fun onFailure() = onSessionEnded(connectionGeneration)
     }
 
-    private fun handleDisconnectLocked(callbackGeneration: Long) {
-        if (!isCurrent(callbackGeneration)) return
-        closeSessionLocked()
-        if (running && networkAvailable) {
-            scheduleRetryLocked()
-        } else if (running) {
-            publish(ConnectionStatus.WAITING_FOR_NETWORK)
+    private fun onSessionEnded(connectionGeneration: Long) {
+        val closing: ConnectionSession?
+        val retryPlan: RetryPlan?
+        synchronized(lock) {
+            val current = activeSession
+            if (current?.generation != connectionGeneration) return
+            activeSession = null
+            closing = current.value
+            retryPlan = if (running && networkAvailable) reserveRetryLocked() else null
         }
+        closeAndDispose(closing)
+        if (retryPlan != null) schedule(retryPlan)
     }
 
-    private fun scheduleRetryLocked() {
-        if (!running || !networkAvailable || scheduledRetry != null) return
+    private fun scheduleAfterConnectionFailure(connectionGeneration: Long) {
+        val retryPlan = synchronized(lock) {
+            if (connectingGeneration != connectionGeneration || generation != connectionGeneration) return
+            connectingGeneration = null
+            if (running && networkAvailable) reserveRetryLocked() else null
+        }
+        if (retryPlan != null) schedule(retryPlan)
+    }
+
+    private fun reserveRetryLocked(): RetryPlan {
         val delay = RETRY_DELAYS_MILLIS[retryIndex.coerceAtMost(RETRY_DELAYS_MILLIS.lastIndex)]
         if (retryIndex < RETRY_DELAYS_MILLIS.lastIndex) retryIndex += 1
         val retryGeneration = ++generation
+        retryPending = true
+        return RetryPlan(retryGeneration, delay)
+    }
+
+    private fun schedule(plan: RetryPlan) {
         publish(ConnectionStatus.RETRYING)
-        scheduledRetry = scheduler.schedule(delay) {
-            synchronized(lock) {
-                if (!running || !networkAvailable || generation != retryGeneration) return@synchronized
-                scheduledRetry = null
-                connectLocked()
+        val scheduled = try {
+            scheduler.schedule(plan.delayMillis) { fireRetry(plan.generation) }
+        } catch (_: Exception) {
+            null
+        }
+        val keep = synchronized(lock) {
+            if (
+                scheduled != null &&
+                running &&
+                networkAvailable &&
+                retryPending &&
+                generation == plan.generation
+            ) {
+                scheduledRetry = scheduled
+                true
+            } else {
+                false
             }
         }
+        if (!keep) cancel(scheduled)
     }
 
-    private fun cancelRetryLocked() {
-        generation += 1
-        scheduledRetry?.cancel()
-        scheduledRetry = null
+    private fun fireRetry(retryGeneration: Long) {
+        val shouldConnect = synchronized(lock) {
+            if (
+                !running ||
+                !networkAvailable ||
+                !retryPending ||
+                generation != retryGeneration
+            ) {
+                return
+            }
+            retryPending = false
+            scheduledRetry = null
+            true
+        }
+        if (shouldConnect) beginConnect()
     }
 
-    private fun closeSessionLocked() {
-        generation += 1
-        val closing = session
-        session = null
+    private fun cancel(retry: ScheduledRetry?) {
         try {
-            closing?.close()
+            retry?.cancel()
         } catch (_: Exception) {
-            // Cleanup remains best-effort; dispose still runs.
+            // Cancellation is best-effort; generation checks reject a late task.
+        }
+    }
+
+    private fun closeAndDispose(session: ConnectionSession?) {
+        try {
+            session?.close()
+        } catch (_: Exception) {
+            // Dispose still runs if graceful close fails.
         }
         try {
-            closing?.dispose()
+            session?.dispose()
         } catch (_: Exception) {
-            // A broken session must not keep the supervisor alive.
+            // A broken session cannot keep the supervisor alive.
         }
     }
-
-    private fun isCurrent(callbackGeneration: Long): Boolean =
-        running && session != null && generation == callbackGeneration
 
     private fun publish(status: ConnectionStatus) {
         try {

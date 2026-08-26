@@ -1,6 +1,7 @@
 package dev.codexremote.app.service
 
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.Network
@@ -52,8 +53,8 @@ class CodexRemoteService : Service() {
             scheduler = ExecutorRetryScheduler(retryExecutor),
             statusListener = ConnectionStatusListener(notifications::updateForeground),
         )
+        supervisor?.start(networkAvailable = false)
         registerNetworkCallback()
-        supervisor?.start(networkAvailable = connectivityManager.activeNetwork != null)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
@@ -77,14 +78,22 @@ class CodexRemoteService : Service() {
 
     private fun registerNetworkCallback() {
         val callback = object : ConnectivityManager.NetworkCallback() {
+            private val availableNetworks = mutableSetOf<Network>()
+
             override fun onAvailable(network: Network) {
-                supervisor?.onNetworkAvailable()
+                val firstNetwork = synchronized(availableNetworks) {
+                    availableNetworks.add(network)
+                    availableNetworks.size == 1
+                }
+                if (firstNetwork) supervisor?.onNetworkAvailable()
             }
 
             override fun onLost(network: Network) {
-                if (connectivityManager.activeNetwork == null) {
-                    supervisor?.onNetworkUnavailable()
+                val noNetworks = synchronized(availableNetworks) {
+                    availableNetworks.remove(network)
+                    availableNetworks.isEmpty()
                 }
+                if (noNetworks) supervisor?.onNetworkUnavailable()
             }
         }
         networkCallback = callback
@@ -135,6 +144,12 @@ class CodexRemoteService : Service() {
             override fun close() = stream.close()
 
             override fun dispose() = stream.dispose()
+        }
+    }
+
+    companion object {
+        fun start(context: Context) {
+            context.startForegroundService(Intent(context, CodexRemoteService::class.java))
         }
     }
 }
