@@ -82,7 +82,7 @@ class CompoundCommandIdentityTest {
     @Test
     fun sendOrQueueFailureForSecondDeviceMarksOnlySecondDeviceCommand() {
         queue.enqueue(command(DEVICE_1))
-        server.enqueue(MockResponse().setResponseCode(400))
+        server.enqueue(MockResponse().setResponseCode(503))
 
         val result = outbox.sendOrQueue(command(DEVICE_2))
 
@@ -99,7 +99,7 @@ class CompoundCommandIdentityTest {
         queue.enqueue(command(DEVICE_1))
         server.enqueue(jsonResponse())
 
-        val results = outbox.flush()
+        val results = outbox.flush().outcomes
 
         assertEquals(1, results.size)
         assertTrue(results.single() is CommandOutboxResult.Sent)
@@ -115,7 +115,7 @@ class CompoundCommandIdentityTest {
         queue.enqueue(command(DEVICE_1))
         server.enqueue(MockResponse().setResponseCode(503))
 
-        val results = outbox.flush()
+        val results = outbox.flush().outcomes
 
         assertEquals(1, results.size)
         assertTrue(results.single() is CommandOutboxResult.Queued)

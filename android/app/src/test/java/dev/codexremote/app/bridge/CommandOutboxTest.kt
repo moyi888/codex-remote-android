@@ -53,23 +53,22 @@ class CommandOutboxTest {
         val result = outbox.sendOrQueue(command)
 
         assertTrue(result is CommandOutboxResult.Sent)
+        assertEquals(1, (result as CommandOutboxResult.Sent).command.attempts)
         assertTrue(queue.list().isEmpty())
         assertEquals("first", requestKey(server.takeRequest().body.readUtf8()))
     }
 
     @Test
-    fun sendOrQueueKeepsFailedCommandAndRecordsAttempt() {
+    fun sendOrQueueRemovesTerminalClientFailureAndReturnsRejected() {
         server.enqueue(MockResponse().setResponseCode(400))
         val command = command("first")
 
         val result = outbox.sendOrQueue(command)
 
-        assertTrue(result is CommandOutboxResult.Queued)
-        val queued = queue.peek()
-        assertEquals(command, queued?.command)
-        assertEquals(1, queued?.attempts)
-        assertEquals("2026-08-25T12:01:00Z", queued?.lastAttemptAt)
-        assertEquals(400, ((result as CommandOutboxResult.Queued).error as BridgeApiException).statusCode)
+        assertTrue(result is CommandOutboxResult.Rejected)
+        assertEquals(400, (result as CommandOutboxResult.Rejected).statusCode)
+        assertEquals(1, result.command.attempts)
+        assertTrue(queue.list().isEmpty())
     }
 
     @Test
@@ -81,11 +80,13 @@ class CommandOutboxTest {
         server.enqueue(MockResponse().setResponseCode(503))
         server.enqueue(jsonResponse("completed"))
 
-        val results = outbox.flush()
+        val results = outbox.flush().outcomes
 
         assertEquals(2, results.size)
         assertTrue(results[0] is CommandOutboxResult.Sent)
         assertTrue(results[1] is CommandOutboxResult.Queued)
+        assertEquals(1, results[0].command.attempts)
+        assertEquals(1, results[1].command.attempts)
         assertEquals("first", requestKey(server.takeRequest().body.readUtf8()))
         assertEquals("second", requestKey(server.takeRequest().body.readUtf8()))
         assertEquals(2, server.requestCount)
