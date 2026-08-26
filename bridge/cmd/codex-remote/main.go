@@ -21,6 +21,7 @@ import (
 	"github.com/moyi888/codex-remote-android/bridge/internal/codex"
 	"github.com/moyi888/codex-remote-android/bridge/internal/commands"
 	"github.com/moyi888/codex-remote-android/bridge/internal/config"
+	"github.com/moyi888/codex-remote-android/bridge/internal/desktop"
 	"github.com/moyi888/codex-remote-android/bridge/internal/events"
 	"github.com/moyi888/codex-remote-android/bridge/internal/store"
 )
@@ -34,6 +35,61 @@ type serveOptions struct {
 	codexCommand    string
 	fake            bool
 	allowPublic     bool
+}
+
+type applicationMode string
+
+const (
+	desktopMode applicationMode = "desktop"
+	serveMode   applicationMode = "serve"
+	versionMode applicationMode = "version"
+)
+
+func selectApplicationMode(args []string) (applicationMode, error) {
+	if len(args) == 0 {
+		return desktopMode, nil
+	}
+	switch args[0] {
+	case "serve":
+		return serveMode, nil
+	case "version":
+		return versionMode, nil
+	default:
+		return "", fmt.Errorf("unknown command %q", args[0])
+	}
+}
+
+type applicationActions struct {
+	desktop func() error
+	serve   func(serveOptions) error
+	version func() error
+}
+
+func runApplication(args []string, actions applicationActions) error {
+	mode, err := selectApplicationMode(args)
+	if err != nil {
+		return err
+	}
+	switch mode {
+	case desktopMode:
+		return actions.desktop()
+	case serveMode:
+		options, err := parseServeOptions(args[1:])
+		if err != nil {
+			return err
+		}
+		return actions.serve(options)
+	case versionMode:
+		if len(args) != 1 {
+			return fmt.Errorf("version does not accept arguments")
+		}
+		if actions.version != nil {
+			return actions.version()
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported application mode")
+	}
 }
 
 type appServerRuntime interface {
@@ -302,22 +358,13 @@ func versionText(value string) string {
 }
 
 func main() {
-	if len(os.Args) == 2 && os.Args[1] == "version" {
-		fmt.Println(versionText(version))
-		return
+	err := runApplication(os.Args[1:], applicationActions{
+		desktop: func() error { return desktop.RunApplication(version) },
+		serve:   runServe,
+		version: func() error { fmt.Println(versionText(version)); return nil },
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
-	if len(os.Args) >= 2 && os.Args[1] == "serve" {
-		options, err := parseServeOptions(os.Args[2:])
-		if err == nil {
-			err = runServe(options)
-		}
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		return
-	}
-
-	fmt.Fprintln(os.Stderr, "usage: codex-remote <version|serve>")
-	os.Exit(2)
 }

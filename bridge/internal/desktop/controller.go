@@ -56,6 +56,7 @@ type Bridge interface {
 	Address() string
 	IssueInvitation(string, time.Duration) (auth.PairingInvitation, error)
 	ListDevices() ([]store.DeviceSummary, error)
+	RevokeDevice(string) error
 	Done() <-chan error
 	Close() error
 }
@@ -165,6 +166,31 @@ func (c *Controller) publishFailure() {
 
 func (c *Controller) Refresh(ctx context.Context) error {
 	return c.refresh(ctx, true)
+}
+
+func (c *Controller) RefreshInvitation(ctx context.Context) error {
+	c.mu.Lock()
+	c.invitationURL = ""
+	c.state.ExpiresAt = time.Time{}
+	c.mu.Unlock()
+	return c.Refresh(ctx)
+}
+
+func (c *Controller) RevokeDevice(ctx context.Context, deviceID string) error {
+	if deviceID == "" {
+		return fmt.Errorf("device id is empty")
+	}
+	c.mu.Lock()
+	if c.bridge == nil {
+		c.mu.Unlock()
+		return fmt.Errorf("bridge is not running")
+	}
+	err := c.bridge.RevokeDevice(deviceID)
+	c.mu.Unlock()
+	if err != nil {
+		return fmt.Errorf("revoke paired device")
+	}
+	return c.Refresh(ctx)
 }
 
 func (c *Controller) refresh(ctx context.Context, manual bool) error {

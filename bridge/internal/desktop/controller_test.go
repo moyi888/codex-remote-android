@@ -120,6 +120,29 @@ func TestControllerRotatesExpiredInvitation(t *testing.T) {
 	}
 }
 
+func TestControllerRefreshInvitationRotatesBeforeExpiry(t *testing.T) {
+	clock := newFakeClock()
+	bridge := &fakeBridge{
+		address: "100.88.10.20:8787",
+		invitations: []auth.PairingInvitation{
+			{URL: "codex-remote://pair?token=one", ExpiresAt: clock.Now().Add(5 * time.Minute)},
+			{URL: "codex-remote://pair?token=two", ExpiresAt: clock.Now().Add(5 * time.Minute)},
+		},
+		done: make(chan error, 1),
+	}
+	controller := newTestController(readyProbe("100.88.10.20"), &fakeBridgeFactory{bridges: []Bridge{bridge}}, clock)
+	if err := controller.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	first := controller.State().InvitationPNG
+	if err := controller.RefreshInvitation(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if bridge.issueCalls != 2 || slices.Equal(first, controller.State().InvitationPNG) {
+		t.Fatalf("邀请签发次数 = %d", bridge.issueCalls)
+	}
+}
+
 func TestControllerRestartsBridgeWhenTailnetAddressChanges(t *testing.T) {
 	clock := newFakeClock()
 	first := newFakeBridge("100.88.10.20:8787", clock.Now())
@@ -156,6 +179,25 @@ func TestControllerShutdownClosesBridgeExactlyOnce(t *testing.T) {
 	}
 	if bridge.closeCalls != 1 {
 		t.Fatalf("关闭次数 = %d", bridge.closeCalls)
+	}
+}
+
+func TestControllerRevokesPairedDevice(t *testing.T) {
+	clock := newFakeClock()
+	bridge := newFakeBridge("100.88.10.20:8787", clock.Now())
+	bridge.devices = []store.DeviceSummary{{ID: "phone", Name: "手机"}}
+	controller := newTestController(readyProbe("100.88.10.20"), &fakeBridgeFactory{bridges: []Bridge{bridge}}, clock)
+	if err := controller.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := controller.RevokeDevice(context.Background(), "phone"); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(bridge.revokedIDs, []string{"phone"}) || controller.State().Kind != WaitingForPair {
+		t.Fatalf("revoked=%v state=%+v", bridge.revokedIDs, controller.State())
+	}
+	if err := controller.RevokeDevice(context.Background(), ""); err == nil {
+		t.Fatal("空设备 ID 应被拒绝")
 	}
 }
 
@@ -463,6 +505,7 @@ type fakeBridge struct {
 	issueCalls  int
 	closeCalls  int
 	done        chan error
+	revokedIDs  []string
 }
 
 func newFakeBridge(address string, now time.Time) *fakeBridge {
@@ -503,6 +546,16 @@ func (f *fakeBridge) Close() error {
 }
 
 func (f *fakeBridge) Done() <-chan error { return f.done }
+
+func (f *fakeBridge) RevokeDevice(id string) error {
+	f.revokedIDs = append(f.revokedIDs, id)
+	for index := range f.devices {
+		if f.devices[index].ID == id {
+			f.devices[index].Revoked = true
+		}
+	}
+	return nil
+}
 
 type fakeAutostart struct{}
 

@@ -138,6 +138,10 @@ func (b *httpBridge) ListDevices() ([]store.DeviceSummary, error) {
 	return b.database.ListDevices()
 }
 
+func (b *httpBridge) RevokeDevice(deviceID string) error {
+	return b.database.RevokeDevice(deviceID)
+}
+
 func (b *httpBridge) Done() <-chan error { return b.done }
 
 func (b *httpBridge) Close() error {

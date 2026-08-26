@@ -45,6 +45,62 @@ func TestVersionTextIncludesProductAndVersion(t *testing.T) {
 	}
 }
 
+func TestDefaultDesktopMode(t *testing.T) {
+	mode, err := selectApplicationMode([]string{})
+	if err != nil || mode != desktopMode {
+		t.Fatalf("mode=%q err=%v", mode, err)
+	}
+}
+
+func TestExplicitModesRemainAvailable(t *testing.T) {
+	for argument, want := range map[string]applicationMode{"serve": serveMode, "version": versionMode} {
+		mode, err := selectApplicationMode([]string{argument})
+		if err != nil || mode != want {
+			t.Fatalf("argument=%q mode=%q err=%v", argument, mode, err)
+		}
+	}
+}
+
+func TestRunApplicationDispatchesDefaultDesktop(t *testing.T) {
+	desktopCalls := 0
+	serveCalls := 0
+	err := runApplication([]string{}, applicationActions{
+		desktop: func() error { desktopCalls++; return nil },
+		serve:   func(serveOptions) error { serveCalls++; return nil },
+	})
+	if err != nil || desktopCalls != 1 || serveCalls != 0 {
+		t.Fatalf("err=%v desktop=%d serve=%d", err, desktopCalls, serveCalls)
+	}
+}
+
+func TestRunApplicationKeepsServeAndVersionModes(t *testing.T) {
+	serveCalls := 0
+	versionCalls := 0
+	actions := applicationActions{
+		desktop: func() error { return errors.New("desktop must not run") },
+		serve: func(options serveOptions) error {
+			serveCalls++
+			if !options.fake {
+				t.Fatal("serve options were not parsed")
+			}
+			return nil
+		},
+		version: func() error { versionCalls++; return nil },
+	}
+	if err := runApplication([]string{"serve", "--fake"}, actions); err != nil {
+		t.Fatal(err)
+	}
+	if err := runApplication([]string{"version"}, actions); err != nil {
+		t.Fatal(err)
+	}
+	if serveCalls != 1 || versionCalls != 1 {
+		t.Fatalf("serve=%d version=%d", serveCalls, versionCalls)
+	}
+	if err := runApplication([]string{"version", "extra"}, actions); err == nil {
+		t.Fatal("version 不应接受额外参数")
+	}
+}
+
 func TestNewRuntimeExposesHealthAndPairingToken(t *testing.T) {
 	runtime, err := newRuntime(filepath.Join(t.TempDir(), "bridge.db"), codex.NewFakeAdapter())
 	if err != nil {
