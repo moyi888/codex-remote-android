@@ -11,6 +11,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import dev.codexremote.app.bridge.BridgeApiException
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -59,12 +60,21 @@ class PairingScreenTest {
 
     @Test
     fun expiredMessageIsSanitized() {
-        val message = PairingFailureMessage.forKind(PairingFailureKind.EXPIRED).text
+        val message = PairingFailureMessage.from(
+            BridgeApiException(
+                401,
+                "codex-remote://pair?token=do-not-leak",
+            ),
+            PairingOperation.PAIR,
+        ).text
         show(CameraPermission.REQUESTABLE, errorMessage = message)
 
         compose.onNodeWithTag("pairing-error").assertIsDisplayed()
-        compose.onNodeWithText(message).assertIsDisplayed()
+        compose.onNodeWithText(
+            PairingFailureMessage.forKind(PairingFailureKind.EXPIRED).text,
+        ).assertIsDisplayed()
         compose.onNodeWithText("do-not-leak", substring = true).assertDoesNotExist()
+        compose.onNodeWithText("codex-remote://", substring = true).assertDoesNotExist()
     }
 
     private fun show(
