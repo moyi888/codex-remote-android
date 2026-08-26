@@ -97,6 +97,14 @@ func (p *RPCProcess) readLoop() {
 			return
 		}
 		if message.Method != "" {
+			if message.Method == "mcpServer/elicitation/request" && message.ID != nil {
+				if err := p.respond(*message.ID, map[string]any{
+					"action": "cancel", "content": nil,
+				}); err != nil {
+					p.responses <- scanResult{err: err}
+					return
+				}
+			}
 			select {
 			case p.notify <- Notification{ID: message.ID, Method: message.Method, Params: message.Params}:
 			default:
@@ -129,7 +137,7 @@ func (p *RPCProcess) Notify(_ context.Context, method string, params any) error 
 	return err
 }
 
-func (p *RPCProcess) Respond(_ context.Context, id uint64, result any) error {
+func (p *RPCProcess) respond(id uint64, result any) error {
 	p.writeMu.Lock()
 	defer p.writeMu.Unlock()
 	message := struct {

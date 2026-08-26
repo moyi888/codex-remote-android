@@ -26,7 +26,6 @@ import (
 type ManagedRPCTransport interface {
 	codex.RPCTransport
 	Notifications() <-chan codex.Notification
-	Respond(context.Context, uint64, any) error
 	Done() <-chan error
 	Close() error
 }
@@ -141,11 +140,6 @@ func (b *httpBridge) forwardNotifications(ctx context.Context, broker *events.Br
 		case notification, ok := <-b.transport.Notifications():
 			if !ok {
 				return
-			}
-			if notification.Method == "mcpServer/elicitation/request" && notification.ID != nil {
-				_ = b.transport.Respond(ctx, *notification.ID, map[string]any{
-					"action": "cancel", "content": nil,
-				})
 			}
 			threadID, attention, detected := codex.AttentionFromNotification(notification, now())
 			if !detected {

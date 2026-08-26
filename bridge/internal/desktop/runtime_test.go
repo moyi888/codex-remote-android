@@ -169,14 +169,6 @@ func TestHTTPBridgePublishesSanitizedBrowserAttention(t *testing.T) {
 			"url":"https://github.com/login/oauth?token=do-not-leak"
 		}`),
 	}
-	select {
-	case response := <-transport.responses:
-		if response.id != requestID || response.action != "cancel" || response.content != nil {
-			t.Fatalf("server response = %+v", response)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("URL elicitation 未收到安全 cancel 响应")
-	}
 	runtime := bridge.(*httpBridge)
 	deadline := time.Now().Add(time.Second)
 	for {
@@ -204,23 +196,16 @@ func TestHTTPBridgePublishesSanitizedBrowserAttention(t *testing.T) {
 type fakeManagedTransport struct {
 	done          chan error
 	incoming      chan codex.Notification
-	responses     chan fakeServerResponse
 	closed        chan struct{}
 	calls         int
 	notifications int
 	closeCalls    int
 }
 
-type fakeServerResponse struct {
-	id      uint64
-	action  string
-	content any
-}
-
 func newFakeManagedTransport() *fakeManagedTransport {
 	return &fakeManagedTransport{
 		done: make(chan error, 1), incoming: make(chan codex.Notification, 1),
-		responses: make(chan fakeServerResponse, 1), closed: make(chan struct{}),
+		closed: make(chan struct{}),
 	}
 }
 
@@ -242,11 +227,6 @@ func (f *fakeManagedTransport) Notify(_ context.Context, method string, _ any) e
 
 func (f *fakeManagedTransport) Done() <-chan error                       { return f.done }
 func (f *fakeManagedTransport) Notifications() <-chan codex.Notification { return f.incoming }
-func (f *fakeManagedTransport) Respond(_ context.Context, id uint64, result any) error {
-	response := result.(map[string]any)
-	f.responses <- fakeServerResponse{id: id, action: response["action"].(string), content: response["content"]}
-	return nil
-}
 func (f *fakeManagedTransport) Close() error {
 	f.closeCalls++
 	if f.closeCalls == 1 {
