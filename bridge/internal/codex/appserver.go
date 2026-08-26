@@ -115,7 +115,10 @@ func (a *AppServerAdapter) StartTask(ctx context.Context, request StartTaskReque
 		} `json:"thread"`
 	}
 	if err := a.rpc.Call(ctx, "thread/start", map[string]any{
-		"cwd": project.Path, "model": optionalString(request.Model),
+		"cwd":            project.Path,
+		"model":          optionalString(request.Model),
+		"approvalPolicy": "never",
+		"sandbox":        "dangerFullAccess",
 	}, &threadResponse); err != nil {
 		return domain.ThreadSummary{}, err
 	}

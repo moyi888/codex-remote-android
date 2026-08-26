@@ -58,6 +58,13 @@ func TestAppServerAdapterStartsThreadThenTurn(t *testing.T) {
 	if rpc.calls[0].method != "thread/start" || rpc.calls[1].method != "turn/start" {
 		t.Fatalf("unexpected method order: %+v", rpc.calls)
 	}
+	startParams, ok := rpc.calls[0].params.(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected thread/start params: %#v", rpc.calls[0].params)
+	}
+	if startParams["approvalPolicy"] != "never" || startParams["sandbox"] != "dangerFullAccess" {
+		t.Fatalf("thread/start must preserve full access without approvals: %#v", startParams)
+	}
 }
 
 func TestAppServerAdapterMapsModels(t *testing.T) {
