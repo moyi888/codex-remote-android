@@ -51,54 +51,107 @@ class PairingScanGate {
     }
 }
 
+class PairingAnalysisSession(
+    private val onInvitation: (String) -> Unit,
+) : AutoCloseable {
+    private val lock = Any()
+    private val gate = PairingScanGate()
+    private var closed = false
+    private var processing = false
+    private var finishActiveFrame: (() -> Unit)? = null
+
+    fun analyze(
+        start: (((List<String>) -> Unit) -> Unit),
+        closeFrame: () -> Unit,
+    ) {
+        synchronized(lock) {
+            if (closed || processing) {
+                closeFrame()
+                return
+            }
+            processing = true
+        }
+
+        val finished = AtomicBoolean(false)
+        val finish: (List<String>) -> Unit = finish@{ rawValues ->
+            if (!finished.compareAndSet(false, true)) return@finish
+            try {
+                synchronized(lock) {
+                    processing = false
+                    finishActiveFrame = null
+                    if (!closed) {
+                        rawValues.asSequence()
+                            .map(gate::accept)
+                            .filterIsInstance<PairingScanResult.Invitation>()
+                            .firstOrNull()
+                            ?.let { onInvitation(it.raw) }
+                    }
+                }
+            } finally {
+                closeFrame()
+            }
+        }
+        synchronized(lock) {
+            finishActiveFrame = { finish(emptyList()) }
+        }
+        try {
+            start(finish)
+        } catch (_: RuntimeException) {
+            finish(emptyList())
+        }
+    }
+
+    override fun close() {
+        beginClose()?.invoke()
+    }
+
+    fun beginClose(): (() -> Unit)? {
+        synchronized(lock) {
+            if (closed) return null
+            closed = true
+            return finishActiveFrame
+        }
+    }
+}
+
 class PairingQrAnalyzer(
     private val scanner: BarcodeScanner,
     private val onInvitation: (String) -> Unit,
 ) : ImageAnalysis.Analyzer, AutoCloseable {
-    private val processing = AtomicBoolean(false)
-    private val closed = AtomicBoolean(false)
-    private val gate = PairingScanGate()
+    private val session = PairingAnalysisSession(onInvitation)
 
     @ExperimentalGetImage
     override fun analyze(imageProxy: ImageProxy) {
-        if (closed.get() || !processing.compareAndSet(false, true)) {
-            imageProxy.close()
-            return
-        }
-        val mediaImage = imageProxy.image
-        if (mediaImage == null) {
-            processing.set(false)
-            imageProxy.close()
-            return
-        }
-        val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
-        try {
-            scanner.process(image)
-                .addOnSuccessListener(::acceptBarcodes)
-                .addOnCompleteListener {
-                    processing.set(false)
-                    imageProxy.close()
+        session.analyze(
+            start = { complete ->
+                val mediaImage = requireNotNull(imageProxy.image) { "camera frame has no image" }
+                val image = InputImage.fromMediaImage(
+                    mediaImage,
+                    imageProxy.imageInfo.rotationDegrees,
+                )
+                scanner.process(image).addOnCompleteListener { task ->
+                    val values = try {
+                        if (task.isSuccessful) qrValues(task.result) else emptyList()
+                    } catch (_: RuntimeException) {
+                        emptyList()
+                    }
+                    complete(values)
                 }
-        } catch (_: RuntimeException) {
-            processing.set(false)
-            imageProxy.close()
-        }
+            },
+            closeFrame = imageProxy::close,
+        )
     }
 
-    private fun acceptBarcodes(barcodes: List<Barcode>) {
-        if (closed.get()) return
-        barcodes.asSequence()
-            .filter { it.format == Barcode.FORMAT_QR_CODE }
-            .mapNotNull(Barcode::getRawValue)
-            .map(gate::accept)
-            .filterIsInstance<PairingScanResult.Invitation>()
-            .firstOrNull()
-            ?.let { invitation ->
-                if (!closed.get()) onInvitation(invitation.raw)
-            }
+    private fun qrValues(barcodes: List<Barcode>): List<String> = barcodes.mapNotNull { barcode ->
+        if (barcode.format == Barcode.FORMAT_QR_CODE) barcode.rawValue else null
     }
 
     override fun close() {
-        if (closed.compareAndSet(false, true)) scanner.close()
+        val finishFrame = session.beginClose()
+        try {
+            scanner.close()
+        } finally {
+            finishFrame?.invoke()
+        }
     }
 }
