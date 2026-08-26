@@ -78,6 +78,23 @@ class AndroidUiContractTest {
         assertTrue(names.contains("android.permission.CAMERA"))
     }
 
+    @Test
+    fun pairingPresentationIsScanFirstWithPasteFallback() {
+        val granted = pairingPresentation(CameraPermission.GRANTED)
+        assertEquals(PairingPrimaryAction.SCAN, granted.primaryAction)
+        assertTrue(granted.showScanner)
+        assertTrue(granted.pasteAvailable)
+        assertFalse(granted.pasteExpandedByDefault)
+
+        val requestable = pairingPresentation(CameraPermission.REQUESTABLE)
+        assertEquals(PairingPrimaryAction.REQUEST_CAMERA, requestable.primaryAction)
+        assertTrue(requestable.pasteAvailable)
+
+        val denied = pairingPresentation(CameraPermission.DENIED)
+        assertEquals(PairingPrimaryAction.PASTE, denied.primaryAction)
+        assertTrue(denied.pasteAvailable)
+    }
+
     private fun org.w3c.dom.Node.attributeValues(
         childName: String,
         attributeName: String,
