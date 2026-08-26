@@ -8,6 +8,7 @@ $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $readme = Get-Content -LiteralPath (Join-Path $repositoryRoot 'README.md') -Raw -Encoding UTF8
 $release = Get-Content -LiteralPath (Join-Path $repositoryRoot '.github/workflows/release.yml') -Raw -Encoding UTF8
 $ci = Get-Content -LiteralPath (Join-Path $repositoryRoot '.github/workflows/ci.yml') -Raw -Encoding UTF8
+$androidBuild = Get-Content -LiteralPath (Join-Path $repositoryRoot 'android/app/build.gradle.kts') -Raw -Encoding UTF8
 
 $requiredQuickStart = @(
     (ConvertFrom-Utf8Base64 'IyMg5Zub5q2l5byA5aeL5L2/55So'),
@@ -55,6 +56,15 @@ foreach ($text in @(
 )) {
     if (-not $ci.Contains($text)) {
         throw "CI workflow is missing the Bridge race contract: $text"
+    }
+}
+
+foreach ($text in @(
+    'versionCode = 2',
+    'versionName = "0.2.0-alpha.1"'
+)) {
+    if (-not $androidBuild.Contains($text)) {
+        throw "Android release metadata is missing: $text"
     }
 }
 
