@@ -89,6 +89,39 @@ func TestRPCProcessDeliversNotificationAfterResponse(t *testing.T) {
 	}
 }
 
+func TestRPCProcessRespondsToServerRequestWithoutDeadlockingCall(t *testing.T) {
+	process, err := StartRPCProcess(context.Background(), os.Args[0], []string{"-test.run=TestRPCProcessServerRequestHelper", "--"}, []string{"CODEX_REMOTE_SERVER_REQUEST_HELPER=1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer process.Close()
+
+	callDone := make(chan error, 1)
+	go func() {
+		var result struct {
+			Echo string `json:"echo"`
+		}
+		callDone <- process.Call(context.Background(), "turn/start", nil, &result)
+	}()
+	request := <-process.Notifications()
+	if request.ID == nil || *request.ID != 99 || request.Method != "mcpServer/elicitation/request" {
+		t.Fatalf("server request = %+v", request)
+	}
+	if err := process.Respond(context.Background(), *request.ID, map[string]any{
+		"action": "cancel", "content": nil,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-callDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("server request response did not unblock the active call")
+	}
+}
+
 func TestRPCProcessReportsUnexpectedExit(t *testing.T) {
 	process, err := StartRPCProcess(context.Background(), os.Args[0], []string{"-test.run=TestRPCProcessExitHelper", "--"}, []string{"CODEX_REMOTE_EXIT_HELPER=1"})
 	if err != nil {
@@ -180,6 +213,37 @@ func TestRPCProcessDelayedNotificationHelper(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	fmt.Println(`{"method":"item/started","params":{"threadId":"thread-1"}}`)
 	_, _ = io.Copy(io.Discard, os.Stdin)
+}
+
+func TestRPCProcessServerRequestHelper(t *testing.T) {
+	if os.Getenv("CODEX_REMOTE_SERVER_REQUEST_HELPER") != "1" {
+		return
+	}
+	scanner := bufio.NewScanner(os.Stdin)
+	if !scanner.Scan() {
+		os.Exit(2)
+	}
+	var call struct {
+		ID uint64 `json:"id"`
+	}
+	if json.Unmarshal(scanner.Bytes(), &call) != nil {
+		os.Exit(3)
+	}
+	fmt.Println(`{"id":99,"method":"mcpServer/elicitation/request","params":{"threadId":"thread-1","mode":"url","url":"https://github.com/login"}}`)
+	if !scanner.Scan() {
+		os.Exit(4)
+	}
+	var response struct {
+		ID     uint64 `json:"id"`
+		Result struct {
+			Action  string `json:"action"`
+			Content any    `json:"content"`
+		} `json:"result"`
+	}
+	if json.Unmarshal(scanner.Bytes(), &response) != nil || response.ID != 99 || response.Result.Action != "cancel" || response.Result.Content != nil {
+		os.Exit(5)
+	}
+	fmt.Printf(`{"id":%d,"result":{"echo":"turn/start"}}`+"\n", call.ID)
 }
 
 func TestRPCProcessExitHelper(t *testing.T) {

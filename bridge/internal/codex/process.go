@@ -37,6 +37,7 @@ type rpcMessage struct {
 }
 
 type Notification struct {
+	ID     *uint64
 	Method string
 	Params json.RawMessage
 }
@@ -50,7 +51,8 @@ type RPCProcess struct {
 	cmd          *exec.Cmd
 	stdin        io.WriteCloser
 	scan         *bufio.Scanner
-	mu           sync.Mutex
+	callMu       sync.Mutex
+	writeMu      sync.Mutex
 	nextID       uint64
 	notify       chan Notification
 	responses    chan scanResult
@@ -96,7 +98,7 @@ func (p *RPCProcess) readLoop() {
 		}
 		if message.Method != "" {
 			select {
-			case p.notify <- Notification{Method: message.Method, Params: message.Params}:
+			case p.notify <- Notification{ID: message.ID, Method: message.Method, Params: message.Params}:
 			default:
 			}
 			continue
@@ -113,8 +115,8 @@ func (p *RPCProcess) Notifications() <-chan Notification { return p.notify }
 func (p *RPCProcess) Done() <-chan error { return p.done }
 
 func (p *RPCProcess) Notify(_ context.Context, method string, params any) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	p.writeMu.Lock()
+	defer p.writeMu.Unlock()
 	message := struct {
 		Method string `json:"method"`
 		Params any    `json:"params,omitempty"`
@@ -127,18 +129,36 @@ func (p *RPCProcess) Notify(_ context.Context, method string, params any) error 
 	return err
 }
 
+func (p *RPCProcess) Respond(_ context.Context, id uint64, result any) error {
+	p.writeMu.Lock()
+	defer p.writeMu.Unlock()
+	message := struct {
+		ID     uint64 `json:"id"`
+		Result any    `json:"result"`
+	}{ID: id, Result: result}
+	encoded, err := json.Marshal(message)
+	if err != nil {
+		return err
+	}
+	_, err = p.stdin.Write(append(encoded, '\n'))
+	return err
+}
+
 func (p *RPCProcess) Call(ctx context.Context, method string, params, result any) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	p.callMu.Lock()
+	defer p.callMu.Unlock()
 	p.nextID++
 	request := rpcRequest{ID: p.nextID, Method: method, Params: params}
 	encoded, err := json.Marshal(request)
 	if err != nil {
 		return err
 	}
+	p.writeMu.Lock()
 	if _, err := p.stdin.Write(append(encoded, '\n')); err != nil {
+		p.writeMu.Unlock()
 		return err
 	}
+	p.writeMu.Unlock()
 
 	for {
 		select {
