@@ -20,21 +20,29 @@ type Project struct {
 }
 
 type AppServerAdapter struct {
-	rpc      RPCClient
-	projects []Project
+	rpc     RPCClient
+	catalog ProjectCatalog
 }
 
 func NewAppServerAdapter(rpc RPCClient, projects []Project) *AppServerAdapter {
-	return &AppServerAdapter{rpc: rpc, projects: append([]Project(nil), projects...)}
+	return &AppServerAdapter{rpc: rpc, catalog: NewStaticProjectCatalog(rpc, projects)}
+}
+
+func NewHistoryAppServerAdapter(rpc RPCClient) *AppServerAdapter {
+	return &AppServerAdapter{rpc: rpc, catalog: NewHistoryProjectCatalog(rpc)}
 }
 
 func (a *AppServerAdapter) Capabilities() Capabilities {
 	return Capabilities{ReadThreads: true, StartTask: true, SendTurn: true, StopTurn: true}
 }
 
-func (a *AppServerAdapter) ListProjects(context.Context) ([]domain.ProjectOption, error) {
-	result := make([]domain.ProjectOption, 0, len(a.projects))
-	for _, project := range a.projects {
+func (a *AppServerAdapter) ListProjects(ctx context.Context) ([]domain.ProjectOption, error) {
+	projects, err := a.catalog.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]domain.ProjectOption, 0, len(projects))
+	for _, project := range projects {
 		result = append(result, domain.ProjectOption{ID: project.ID, DisplayName: project.DisplayName})
 	}
 	return result, nil
@@ -72,40 +80,56 @@ func (a *AppServerAdapter) ListModels(ctx context.Context) ([]domain.ModelOption
 }
 
 func (a *AppServerAdapter) ListThreads(ctx context.Context) ([]domain.ThreadSummary, error) {
-	var response struct {
-		Data []struct {
-			ID        string          `json:"id"`
-			Name      *string         `json:"name"`
-			Preview   string          `json:"preview"`
-			CWD       string          `json:"cwd"`
-			Status    json.RawMessage `json:"status"`
-			UpdatedAt int64           `json:"updatedAt"`
-		} `json:"data"`
-	}
-	if err := a.rpc.Call(ctx, "thread/list", map[string]any{"archived": false, "limit": 100}, &response); err != nil {
+	records, err := a.catalog.Threads(ctx)
+	if err != nil {
 		return nil, err
 	}
-	threads := make([]domain.ThreadSummary, 0, len(response.Data))
-	for _, item := range response.Data {
+	threads := make([]domain.ThreadSummary, 0, len(records))
+	for _, item := range records {
 		title := item.Preview
 		if item.Name != nil && *item.Name != "" {
 			title = *item.Name
 		}
-		projectID, projectName := a.projectForPath(item.CWD)
-		state := domain.ThreadIdle
-		if string(item.Status) != `"idle"` && string(item.Status) != `{"type":"idle"}` {
-			state = domain.ThreadRunning
+		projectID, projectName := "", item.CWD
+		if project, ok := a.catalog.ProjectForPath(item.CWD); ok {
+			projectID, projectName = project.ID, project.DisplayName
 		}
 		threads = append(threads, domain.ThreadSummary{
 			ID: item.ID, Title: title, ProjectID: projectID, ProjectName: projectName,
-			Source: domain.ThreadSourceAppServer, State: state, UpdatedAt: time.Unix(item.UpdatedAt, 0).UTC(),
+			Source: domain.ThreadSourceAppServer, State: threadStateFromStatus(item.Status), UpdatedAt: time.Unix(item.UpdatedAt, 0).UTC(),
 		})
 	}
 	return threads, nil
 }
 
+func threadStateFromStatus(raw json.RawMessage) domain.ThreadState {
+	var statusType string
+	if err := json.Unmarshal(raw, &statusType); err != nil {
+		var status struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(raw, &status); err != nil {
+			return domain.ThreadDisconnected
+		}
+		statusType = status.Type
+	}
+	switch statusType {
+	case "active":
+		return domain.ThreadRunning
+	case "idle", "notLoaded":
+		return domain.ThreadIdle
+	case "systemError":
+		return domain.ThreadFailed
+	default:
+		return domain.ThreadDisconnected
+	}
+}
+
 func (a *AppServerAdapter) StartTask(ctx context.Context, request StartTaskRequest) (domain.ThreadSummary, error) {
-	project, ok := a.findProject(request.ProjectID)
+	project, ok, err := a.catalog.Resolve(ctx, request.ProjectID)
+	if err != nil {
+		return domain.ThreadSummary{}, err
+	}
 	if !ok {
 		return domain.ThreadSummary{}, fmt.Errorf("project %q is not allowed", request.ProjectID)
 	}
@@ -162,24 +186,6 @@ func (a *AppServerAdapter) Steer(context.Context, SendTurnRequest) error {
 
 func (a *AppServerAdapter) StopTurn(context.Context, string) error {
 	return fmt.Errorf("stopping requires an observed active turn id")
-}
-
-func (a *AppServerAdapter) findProject(id string) (Project, bool) {
-	for _, project := range a.projects {
-		if project.ID == id {
-			return project, true
-		}
-	}
-	return Project{}, false
-}
-
-func (a *AppServerAdapter) projectForPath(path string) (string, string) {
-	for _, project := range a.projects {
-		if project.Path == path {
-			return project.ID, project.DisplayName
-		}
-	}
-	return "", path
 }
 
 func optionalString(value string) any {

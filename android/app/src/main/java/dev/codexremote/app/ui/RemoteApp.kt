@@ -43,13 +43,24 @@ fun RemoteApp(
     busy: Boolean,
     deliveryMessage: String?,
     onPair: (String) -> Unit,
+    cameraPermission: CameraPermission,
+    onScannedInvitation: (String) -> Unit,
+    onRequestCamera: () -> Unit,
+    onOpenAppSettings: () -> Unit,
+    onOpenTailscale: () -> Unit,
     onRefresh: () -> Unit,
     onStartTask: (String, String, String?, String?) -> Unit,
     onSendTurn: (String, String) -> Unit,
 ) {
     when (loadResult) {
-        LoadResult.Unpaired -> PairingScreen(busy, null, onPair)
-        is LoadResult.Failed -> PairingScreen(busy, loadResult.message, onPair)
+        LoadResult.Unpaired -> PairingScreen(
+            busy, null, cameraPermission, onScannedInvitation, onRequestCamera,
+            onOpenAppSettings, onPair, onOpenTailscale,
+        )
+        is LoadResult.Failed -> PairingScreen(
+            busy, loadResult.message, cameraPermission,
+            onScannedInvitation, onRequestCamera, onOpenAppSettings, onPair, onOpenTailscale,
+        )
         is LoadResult.Ready -> HomeScreen(
             state = loadResult.state,
             busy = busy,
@@ -58,44 +69,6 @@ fun RemoteApp(
             onStartTask = onStartTask,
             onSendTurn = onSendTurn,
         )
-    }
-}
-
-@Composable
-private fun PairingScreen(
-    busy: Boolean,
-    errorMessage: String?,
-    onPair: (String) -> Unit,
-) {
-    var invitation by remember { mutableStateOf("") }
-    Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Text("Codex Remote", style = MaterialTheme.typography.headlineMedium)
-        Spacer(Modifier.height(8.dp))
-        Text("通过 Tailscale 连接家中 Windows Bridge。粘贴配对链接，或直接扫描电脑上的二维码。")
-        Spacer(Modifier.height(20.dp))
-        OutlinedTextField(
-            value = invitation,
-            onValueChange = { invitation = it },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("codex-remote:// 配对链接") },
-            minLines = 3,
-            enabled = !busy,
-        )
-        errorMessage?.let {
-            Spacer(Modifier.height(12.dp))
-            Text(it, color = MaterialTheme.colorScheme.error)
-        }
-        Spacer(Modifier.height(16.dp))
-        Button(
-            onClick = { onPair(invitation) },
-            enabled = !busy && invitation.isNotBlank(),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(if (busy) "正在连接…" else "配对并连接")
-        }
     }
 }
 

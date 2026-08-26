@@ -8,11 +8,13 @@ import android.net.Network
 import android.os.IBinder
 import dev.codexremote.app.bridge.BridgeEventStream
 import dev.codexremote.app.bridge.BridgeHttpClient
+import dev.codexremote.app.bridge.CommandOutbox
 import dev.codexremote.app.bridge.CursorStore
 import dev.codexremote.app.bridge.EventStreamListener
 import dev.codexremote.app.bridge.EventStreamState
 import dev.codexremote.app.bridge.SharedPreferencesCursorStore
 import dev.codexremote.app.bridge.SnapshotLoader
+import dev.codexremote.app.bridge.PendingCommandQueue
 import dev.codexremote.app.protocol.EventEnvelope
 import dev.codexremote.app.protocol.Snapshot
 import dev.codexremote.app.protocol.StoredBridgeConnection
@@ -20,6 +22,7 @@ import dev.codexremote.app.security.CredentialVault
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
+import java.time.Instant
 import kotlinx.serialization.json.JsonObject
 
 class CodexRemoteService : Service() {
@@ -46,12 +49,27 @@ class CodexRemoteService : Service() {
             return
         }
         connectivityManager = getSystemService(ConnectivityManager::class.java)
+        val httpClient = BridgeHttpClient()
+        val commandFlusher = ConnectedCommandFlusher(
+            executor = BackgroundExecutor { task -> retryExecutor.execute(task) },
+            flush = {
+                CommandOutbox(
+                    queue = PendingCommandQueue.create(this),
+                    httpClient = httpClient,
+                    connection = connection,
+                    clock = { Instant.now().toString() },
+                ).flush()
+            },
+        )
         supervisor = ConnectionSupervisor(
             sessionFactory = ConnectionSessionFactory { callbacks ->
-                createSession(connection, callbacks)
+                createSession(connection, callbacks, httpClient)
             },
             scheduler = ExecutorRetryScheduler(retryExecutor),
-            statusListener = ConnectionStatusListener(notifications::updateForeground),
+            statusListener = ConnectionStatusListener { status ->
+                notifications.updateForeground(status)
+                commandFlusher.onStatusChanged(status)
+            },
         )
         supervisor?.start(networkAvailable = false)
         registerNetworkCallback()
@@ -103,8 +121,8 @@ class CodexRemoteService : Service() {
     private fun createSession(
         connection: StoredBridgeConnection,
         callbacks: ConnectionSessionCallbacks,
+        httpClient: BridgeHttpClient,
     ): ConnectionSession {
-        val httpClient = BridgeHttpClient()
         val cursorStore: CursorStore = SharedPreferencesCursorStore(this)
         val stream = BridgeEventStream(
             baseUrl = connection.baseUrl,

@@ -6,15 +6,40 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"net/url"
 	"time"
 
 	"github.com/moyi888/codex-remote-android/bridge/internal/store"
 )
 
+var (
+	ErrInvalidPairingRequest = errors.New("invalid pairing request")
+	ErrPairingTokenRejected  = errors.New("pairing token rejected")
+)
+
 type PairingService struct {
 	store *store.Store
 	now   func() time.Time
+}
+
+type PairingInvitation struct {
+	URL       string
+	ExpiresAt time.Time
+}
+
+func (s *PairingService) IssueInvitation(baseURL string, ttl time.Duration) (PairingInvitation, error) {
+	token, err := s.Issue(ttl)
+	if err != nil {
+		return PairingInvitation{}, err
+	}
+	invitation := url.URL{Scheme: "codex-remote", Host: "pair"}
+	query := invitation.Query()
+	query.Set("baseUrl", baseURL)
+	query.Set("token", token)
+	invitation.RawQuery = query.Encode()
+	return PairingInvitation{URL: invitation.String(), ExpiresAt: s.now().Add(ttl)}, nil
 }
 
 func NewPairingService(store *store.Store, now func() time.Time) *PairingService {
@@ -37,21 +62,20 @@ func (s *PairingService) Issue(ttl time.Duration) (string, error) {
 
 func (s *PairingService) Exchange(token, deviceID, deviceName string) (string, error) {
 	if token == "" || deviceID == "" || deviceName == "" {
-		return "", fmt.Errorf("token, device id and device name are required")
-	}
-	consumed, err := s.store.ConsumePairingToken(hash(token), s.now())
-	if err != nil {
-		return "", err
-	}
-	if !consumed {
-		return "", fmt.Errorf("pairing token is invalid, expired or already consumed")
+		return "", ErrInvalidPairingRequest
 	}
 	credential, err := randomToken()
 	if err != nil {
 		return "", err
 	}
-	if err := s.store.CreateDevice(deviceID, deviceName, hash(credential)); err != nil {
+	consumed, err := s.store.ExchangePairingToken(
+		hash(token), s.now(), deviceID, deviceName, hash(credential),
+	)
+	if err != nil {
 		return "", err
+	}
+	if !consumed {
+		return "", ErrPairingTokenRejected
 	}
 	return credential, nil
 }
@@ -72,7 +96,14 @@ func (s *PairingService) Authenticate(deviceID, credential string) (bool, error)
 		return false, fmt.Errorf("invalid stored credential hash: %w", err)
 	}
 	gotSum := sha256.Sum256([]byte(credential))
-	return subtle.ConstantTimeCompare(want, gotSum[:]) == 1, nil
+	authenticated := subtle.ConstantTimeCompare(want, gotSum[:]) == 1
+	if !authenticated {
+		return false, nil
+	}
+	if err := s.store.TouchDevice(deviceID, s.now()); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func randomToken() (string, error) {

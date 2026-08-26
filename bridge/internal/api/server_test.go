@@ -120,6 +120,57 @@ func TestSnapshotIncludesLatestPublishedEventCursor(t *testing.T) {
 	}
 }
 
+func TestPairExchangeDistinguishesRejectedTokenFromInternalFailure(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "bridge.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	pairing := auth.NewPairingService(db, time.Now)
+	server := httptest.NewServer(NewServer(pairing, codex.NewFakeAdapter()).Handler())
+	defer server.Close()
+	emptyBody, _ := json.Marshal(map[string]string{})
+	response, err := http.Post(server.URL+"/v1/pair/exchange", "application/json", bytes.NewReader(emptyBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("缺少字段状态 = %d", response.StatusCode)
+	}
+
+	invalidBody, _ := json.Marshal(map[string]string{
+		"token": "invalid", "deviceId": "phone-1", "deviceName": "Pixel",
+	})
+	response, err = http.Post(server.URL+"/v1/pair/exchange", "application/json", bytes.NewReader(invalidBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("无效 token 状态 = %d", response.StatusCode)
+	}
+
+	token, err := pairing.Issue(time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	internalBody, _ := json.Marshal(map[string]string{
+		"token": token, "deviceId": "phone-1", "deviceName": "Pixel",
+	})
+	response, err = http.Post(server.URL+"/v1/pair/exchange", "application/json", bytes.NewReader(internalBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("内部错误状态 = %d", response.StatusCode)
+	}
+}
+
 func TestSnapshotCursorPrecedesStateReadWindow(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "bridge.db"))
 	if err != nil {

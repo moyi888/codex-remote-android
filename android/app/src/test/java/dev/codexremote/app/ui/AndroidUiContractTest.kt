@@ -64,6 +64,48 @@ class AndroidUiContractTest {
         assertTrue(NotificationPermissionPolicy.shouldRequest(sdkInt = 33, granted = false))
     }
 
+    @Test
+    fun manifestDeclaresCameraPermissionForQrPairing() {
+        val document = DocumentBuilderFactory.newInstance().apply {
+            isNamespaceAware = true
+        }.newDocumentBuilder().parse(locateManifest())
+        val permissions = document.getElementsByTagName("uses-permission")
+        val names = (0 until permissions.length).map { index ->
+            permissions.item(index).attributes
+                .getNamedItemNS(ANDROID_NAMESPACE, "name").nodeValue
+        }
+
+        assertTrue(names.contains("android.permission.CAMERA"))
+    }
+
+    @Test
+    fun pairingPresentationIsScanFirstWithPasteFallback() {
+        val granted = pairingPresentation(CameraPermission.GRANTED)
+        assertEquals(PairingPrimaryAction.SCAN, granted.primaryAction)
+        assertTrue(granted.showScanner)
+        assertTrue(granted.pasteAvailable)
+        assertFalse(granted.pasteExpandedByDefault)
+
+        val requestable = pairingPresentation(CameraPermission.REQUESTABLE)
+        assertEquals(PairingPrimaryAction.REQUEST_CAMERA, requestable.primaryAction)
+        assertTrue(requestable.pasteAvailable)
+
+        val denied = pairingPresentation(CameraPermission.DENIED)
+        assertEquals(PairingPrimaryAction.PASTE, denied.primaryAction)
+        assertTrue(denied.pasteAvailable)
+        assertTrue(denied.showAppSettings)
+    }
+
+    @Test
+    fun busyPairingRequestIsReplayedAfterCurrentLoad() {
+        val pending = PendingPairingInvitation()
+        assertEquals(null, pending.offer("first", busy = true))
+        assertEquals(null, pending.offer("latest", busy = true))
+        assertEquals("latest", pending.takeAfterLoad())
+        assertEquals(null, pending.takeAfterLoad())
+        assertEquals("immediate", pending.offer("immediate", busy = false))
+    }
+
     private fun org.w3c.dom.Node.attributeValues(
         childName: String,
         attributeName: String,

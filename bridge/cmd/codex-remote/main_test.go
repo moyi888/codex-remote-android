@@ -45,6 +45,62 @@ func TestVersionTextIncludesProductAndVersion(t *testing.T) {
 	}
 }
 
+func TestDefaultDesktopMode(t *testing.T) {
+	mode, err := selectApplicationMode([]string{})
+	if err != nil || mode != desktopMode {
+		t.Fatalf("mode=%q err=%v", mode, err)
+	}
+}
+
+func TestExplicitModesRemainAvailable(t *testing.T) {
+	for argument, want := range map[string]applicationMode{"serve": serveMode, "version": versionMode} {
+		mode, err := selectApplicationMode([]string{argument})
+		if err != nil || mode != want {
+			t.Fatalf("argument=%q mode=%q err=%v", argument, mode, err)
+		}
+	}
+}
+
+func TestRunApplicationDispatchesDefaultDesktop(t *testing.T) {
+	desktopCalls := 0
+	serveCalls := 0
+	err := runApplication([]string{}, applicationActions{
+		desktop: func() error { desktopCalls++; return nil },
+		serve:   func(serveOptions) error { serveCalls++; return nil },
+	})
+	if err != nil || desktopCalls != 1 || serveCalls != 0 {
+		t.Fatalf("err=%v desktop=%d serve=%d", err, desktopCalls, serveCalls)
+	}
+}
+
+func TestRunApplicationKeepsServeAndVersionModes(t *testing.T) {
+	serveCalls := 0
+	versionCalls := 0
+	actions := applicationActions{
+		desktop: func() error { return errors.New("desktop must not run") },
+		serve: func(options serveOptions) error {
+			serveCalls++
+			if !options.fake {
+				t.Fatal("serve options were not parsed")
+			}
+			return nil
+		},
+		version: func() error { versionCalls++; return nil },
+	}
+	if err := runApplication([]string{"serve", "--fake"}, actions); err != nil {
+		t.Fatal(err)
+	}
+	if err := runApplication([]string{"version"}, actions); err != nil {
+		t.Fatal(err)
+	}
+	if serveCalls != 1 || versionCalls != 1 {
+		t.Fatalf("serve=%d version=%d", serveCalls, versionCalls)
+	}
+	if err := runApplication([]string{"version", "extra"}, actions); err == nil {
+		t.Fatal("version 不应接受额外参数")
+	}
+}
+
 func TestNewRuntimeExposesHealthAndPairingToken(t *testing.T) {
 	runtime, err := newRuntime(filepath.Join(t.TempDir(), "bridge.db"), codex.NewFakeAdapter())
 	if err != nil {
@@ -96,6 +152,29 @@ func TestParseServeOptionsRequiresProjectsForRealRuntime(t *testing.T) {
 	}
 }
 
+func TestParseServeOptionsAcceptsHistoryProjectsForDesktopRuntime(t *testing.T) {
+	options, err := parseServeOptions([]string{
+		"--listen", "100.88.10.20:8787",
+		"--history-projects",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !options.historyProjects || options.projects != "" {
+		t.Fatalf("unexpected options: %+v", options)
+	}
+}
+
+func TestParseServeOptionsRejectsAmbiguousProjectSources(t *testing.T) {
+	_, err := parseServeOptions([]string{
+		"--projects", `D:\config\projects.json`,
+		"--history-projects",
+	})
+	if err == nil || !strings.Contains(err.Error(), "choose one") {
+		t.Fatalf("expected exclusive project sources, got %v", err)
+	}
+}
+
 func TestParseServeOptionsAcceptsRealRuntimeConfiguration(t *testing.T) {
 	options, err := parseServeOptions([]string{
 		"--projects", `D:\config\projects.json`,
@@ -141,6 +220,27 @@ func TestStartRealAdapterInitializesConfiguredAppServer(t *testing.T) {
 	}
 	if len(projects) != 1 || projects[0].ID != "app" || len(runtime.calls) != 1 || runtime.calls[0] != "initialize" || len(runtime.notifications) != 1 || runtime.notifications[0] != "initialized" {
 		t.Fatalf("projects=%+v runtime=%+v", projects, runtime)
+	}
+}
+
+func TestStartRealAdapterUsesHistoryProjectCatalog(t *testing.T) {
+	runtime := &fakeAppServerRuntime{}
+	starter := func(context.Context, string, []string, []string) (appServerRuntime, error) {
+		return runtime, nil
+	}
+	adapter, closer, err := startRealAdapter(context.Background(), serveOptions{
+		historyProjects: true,
+		codexCommand:    "codex",
+	}, starter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closer.Close()
+	if _, err := adapter.ListProjects(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(runtime.calls) != 2 || runtime.calls[0] != "initialize" || runtime.calls[1] != "thread/list" {
+		t.Fatalf("calls=%v", runtime.calls)
 	}
 }
 

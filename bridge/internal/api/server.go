@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -127,7 +128,13 @@ func (s *Server) pairExchange(writer http.ResponseWriter, request *http.Request)
 	}
 	credential, err := s.pairing.Exchange(input.Token, input.DeviceID, input.DeviceName)
 	if err != nil {
-		writeError(writer, http.StatusUnauthorized, "pairing token rejected")
+		if errors.Is(err, auth.ErrInvalidPairingRequest) {
+			writeError(writer, http.StatusBadRequest, "invalid pairing request")
+		} else if errors.Is(err, auth.ErrPairingTokenRejected) {
+			writeError(writer, http.StatusUnauthorized, "pairing token rejected")
+		} else {
+			writeError(writer, http.StatusInternalServerError, "pairing failed")
+		}
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{

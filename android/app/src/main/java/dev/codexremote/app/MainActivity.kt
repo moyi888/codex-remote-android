@@ -7,6 +7,8 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.net.Uri
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -16,9 +18,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import dev.codexremote.app.ui.AndroidRemoteAppGateway
 import dev.codexremote.app.ui.CommandDelivery
+import dev.codexremote.app.ui.CameraPermission
 import dev.codexremote.app.ui.DeviceIdentity
 import dev.codexremote.app.ui.LoadResult
 import dev.codexremote.app.ui.NotificationPermissionPolicy
+import dev.codexremote.app.ui.PendingPairingInvitation
 import dev.codexremote.app.ui.RemoteApp
 import dev.codexremote.app.ui.RemoteAppController
 import java.time.Instant
@@ -35,6 +39,13 @@ class MainActivity : ComponentActivity() {
     private var loadResult by mutableStateOf<LoadResult>(LoadResult.Unpaired)
     private var busy by mutableStateOf(false)
     private var deliveryMessage by mutableStateOf<String?>(null)
+    private var cameraPermission by mutableStateOf(CameraPermission.REQUESTABLE)
+    private val pendingPairingInvitation = PendingPairingInvitation()
+    private val cameraPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        cameraPermission = if (granted) CameraPermission.GRANTED else currentCameraPermission()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -45,6 +56,7 @@ class MainActivity : ComponentActivity() {
             newIdentifier = { UUID.randomUUID().toString() },
             now = now,
         )
+        cameraPermission = currentCameraPermission()
         requestNotificationPermissionIfNeeded()
         setContent {
             MaterialTheme {
@@ -53,6 +65,11 @@ class MainActivity : ComponentActivity() {
                     busy = busy,
                     deliveryMessage = deliveryMessage,
                     onPair = ::pair,
+                    cameraPermission = cameraPermission,
+                    onScannedInvitation = ::pair,
+                    onRequestCamera = ::requestCameraPermission,
+                    onOpenAppSettings = ::openAppSettings,
+                    onOpenTailscale = ::openTailscale,
                     onRefresh = ::resumeConnection,
                     onStartTask = { projectId, prompt, modelId, reasoningId ->
                         executeCommand {
@@ -74,12 +91,20 @@ class MainActivity : ComponentActivity() {
         pairingLink(intent)?.let(::pair)
     }
 
+    override fun onResume() {
+        super.onResume()
+        cameraPermission = currentCameraPermission()
+    }
+
     override fun onDestroy() {
         worker.shutdownNow()
         super.onDestroy()
     }
 
-    private fun pair(invitation: String) = executeLoad { controller.pair(invitation) }
+    private fun pair(invitation: String) {
+        val ready = pendingPairingInvitation.offer(invitation, busy) ?: return
+        executeLoad { controller.pair(ready) }
+    }
 
     private fun resumeConnection() = executeLoad(controller::resume)
 
@@ -92,6 +117,7 @@ class MainActivity : ComponentActivity() {
             postToActiveActivity {
                 loadResult = result
                 busy = false
+                pendingPairingInvitation.takeAfterLoad()?.let(::pair)
             }
         }
     }
@@ -130,6 +156,48 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun currentCameraPermission(): CameraPermission {
+        if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            return CameraPermission.GRANTED
+        }
+        val requested = getSharedPreferences(CAMERA_PREFERENCES, MODE_PRIVATE)
+            .getBoolean(CAMERA_REQUESTED_KEY, false)
+        return when {
+            !requested -> CameraPermission.REQUESTABLE
+            shouldShowRequestPermissionRationale(Manifest.permission.CAMERA) ->
+                CameraPermission.REQUESTABLE
+            else -> CameraPermission.DENIED
+        }
+    }
+
+    private fun requestCameraPermission() {
+        check(
+            getSharedPreferences(CAMERA_PREFERENCES, MODE_PRIVATE)
+                .edit()
+                .putBoolean(CAMERA_REQUESTED_KEY, true)
+                .commit(),
+        ) { "Unable to persist camera permission request" }
+        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+    }
+
+    private fun openTailscale() {
+        val launchIntent = packageManager.getLaunchIntentForPackage(TAILSCALE_PACKAGE)
+        if (launchIntent != null) {
+            startActivity(launchIntent)
+        } else {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(TAILSCALE_ANDROID_URL)))
+        }
+    }
+
+    private fun openAppSettings() {
+        startActivity(
+            Intent(
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.fromParts("package", packageName, null),
+            ),
+        )
+    }
+
     private fun loadDeviceIdentity(): DeviceIdentity {
         val preferences = getSharedPreferences(DEVICE_PREFERENCES, MODE_PRIVATE)
         val deviceId = preferences.getString(DEVICE_ID_KEY, null) ?: UUID.randomUUID().toString().also {
@@ -159,5 +227,9 @@ class MainActivity : ComponentActivity() {
     private companion object {
         const val DEVICE_PREFERENCES = "device_identity"
         const val DEVICE_ID_KEY = "device_id"
+        const val CAMERA_PREFERENCES = "camera_permission"
+        const val CAMERA_REQUESTED_KEY = "requested"
+        const val TAILSCALE_ANDROID_URL = "https://tailscale.com/download/android"
+        const val TAILSCALE_PACKAGE = "com.tailscale.ipn"
     }
 }

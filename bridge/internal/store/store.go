@@ -26,6 +26,14 @@ type Device struct {
 	Revoked        bool
 }
 
+type DeviceSummary struct {
+	ID         string
+	Name       string
+	CreatedAt  time.Time
+	LastSeenAt *time.Time
+	Revoked    bool
+}
+
 type EventRecord struct {
 	Cursor    uint64
 	Type      string
@@ -76,7 +84,7 @@ func (s *Store) Device(id string) (Device, error) {
 
 func (s *Store) RevokeDevice(id string) error {
 	result, err := s.db.Exec(
-		`UPDATE devices SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`,
+		`UPDATE devices SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ?`,
 		time.Now().UTC().Format(time.RFC3339Nano), id,
 	)
 	if err != nil {
@@ -90,6 +98,52 @@ func (s *Store) RevokeDevice(id string) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+func (s *Store) TouchDevice(id string, seenAt time.Time) error {
+	result, err := s.db.Exec(`UPDATE devices SET last_seen_at = ? WHERE id = ?`, seenAt.UTC().Format(time.RFC3339Nano), id)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) ListDevices() ([]DeviceSummary, error) {
+	rows, err := s.db.Query(`SELECT id, name, created_at, last_seen_at, revoked_at FROM devices ORDER BY created_at ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var devices []DeviceSummary
+	for rows.Next() {
+		var device DeviceSummary
+		var created string
+		var lastSeen, revoked sql.NullString
+		if err := rows.Scan(&device.ID, &device.Name, &created, &lastSeen, &revoked); err != nil {
+			return nil, err
+		}
+		device.CreatedAt, err = time.Parse(time.RFC3339Nano, created)
+		if err != nil {
+			return nil, err
+		}
+		if lastSeen.Valid {
+			value, parseErr := time.Parse(time.RFC3339Nano, lastSeen.String)
+			if parseErr != nil {
+				return nil, parseErr
+			}
+			device.LastSeenAt = &value
+		}
+		device.Revoked = revoked.Valid
+		devices = append(devices, device)
+	}
+	return devices, rows.Err()
 }
 
 func (s *Store) CreatePairingToken(tokenHash string, expiresAt time.Time) error {
@@ -111,6 +165,53 @@ func (s *Store) ConsumePairingToken(tokenHash string, now time.Time) (bool, erro
 	}
 	rows, err := result.RowsAffected()
 	return rows == 1, err
+}
+
+func (s *Store) ExchangePairingToken(
+	tokenHash string,
+	now time.Time,
+	deviceID string,
+	deviceName string,
+	credentialHash string,
+) (bool, error) {
+	transaction, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer transaction.Rollback()
+	result, err := transaction.Exec(
+		`UPDATE pairing_tokens SET consumed_at = ?
+         WHERE token_hash = ? AND consumed_at IS NULL AND expires_at > ?`,
+		now.UTC().Format(time.RFC3339Nano), tokenHash, now.UTC().Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if rows != 1 {
+		return false, nil
+	}
+	_, err = transaction.Exec(
+		`INSERT INTO devices (id, name, credential_hash, created_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+             name = excluded.name,
+             credential_hash = excluded.credential_hash,
+             created_at = excluded.created_at,
+             last_seen_at = NULL,
+             revoked_at = NULL`,
+		deviceID, deviceName, credentialHash, now.UTC().Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return false, err
+	}
+	if err := transaction.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *Store) AppendEvent(eventType string, payload json.RawMessage, createdAt time.Time) (uint64, error) {
