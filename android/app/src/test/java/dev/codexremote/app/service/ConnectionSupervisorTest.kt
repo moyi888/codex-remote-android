@@ -175,13 +175,14 @@ class ConnectionSupervisorTest {
         )
         supervisor.start(networkAvailable = true)
         callbacks.onConnected()
-        val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+        val executor = java.util.concurrent.Executors.newFixedThreadPool(2)
         try {
             val unavailable = executor.submit { supervisor.onNetworkUnavailable() }
             assertTrue(waitingStatusEntered.await(1, java.util.concurrent.TimeUnit.SECONDS))
-            supervisor.onNetworkAvailable()
-            callbacks.onConnected()
+            val available = executor.submit { supervisor.onNetworkAvailable() }
             releaseWaitingStatus.countDown()
+            available.get(2, java.util.concurrent.TimeUnit.SECONDS)
+            callbacks.onConnected()
             unavailable.get(2, java.util.concurrent.TimeUnit.SECONDS)
             assertEquals(ConnectionStatus.CONNECTED, synchronized(statuses) { statuses.last() })
         } finally {
