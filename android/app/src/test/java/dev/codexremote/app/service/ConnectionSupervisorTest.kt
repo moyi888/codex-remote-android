@@ -79,6 +79,40 @@ class ConnectionSupervisorTest {
     }
 
     @Test
+    fun networkLossDoesNotHoldSupervisorLockWhileSessionCloses() {
+        val callbackFinished = java.util.concurrent.CountDownLatch(1)
+        lateinit var callbacks: ConnectionSessionCallbacks
+        val session = object : ConnectionSession {
+            override fun connect() = Unit
+
+            override fun close() {
+                Thread {
+                    callbacks.onDisconnected()
+                    callbackFinished.countDown()
+                }.start()
+                assertTrue(callbackFinished.await(1, java.util.concurrent.TimeUnit.SECONDS))
+            }
+
+            override fun dispose() = Unit
+        }
+        val supervisor = ConnectionSupervisor(
+            sessionFactory = ConnectionSessionFactory { createdCallbacks ->
+                callbacks = createdCallbacks
+                session
+            },
+            scheduler = FakeScheduler(),
+            statusListener = ConnectionStatusListener { },
+        )
+        supervisor.start(networkAvailable = true)
+
+        supervisor.onNetworkUnavailable()
+
+        assertTrue(callbackFinished.await(1, java.util.concurrent.TimeUnit.SECONDS))
+        supervisor.onNetworkAvailable()
+        assertTrue(supervisor.isRunning())
+    }
+
+    @Test
     fun stopCancelsWorkAndIgnoresLateCallbacks() {
         val harness = Harness()
         harness.supervisor.start(networkAvailable = true)
