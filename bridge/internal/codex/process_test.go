@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -65,6 +66,35 @@ func TestRPCProcessSkipsNotificationBeforeResponse(t *testing.T) {
 	}
 }
 
+func TestRPCProcessReportsUnexpectedExit(t *testing.T) {
+	process, err := StartRPCProcess(context.Background(), os.Args[0], []string{"-test.run=TestRPCProcessExitHelper", "--"}, []string{"CODEX_REMOTE_EXIT_HELPER=1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-process.Done():
+		if err == nil {
+			t.Fatal("异常退出必须报告错误")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("未收到子进程退出信号")
+	}
+	_ = process.Close()
+}
+
+func TestRPCProcessCloseIsIdempotent(t *testing.T) {
+	process, err := StartRPCProcess(context.Background(), os.Args[0], []string{"-test.run=TestRPCProcessWaitHelper", "--"}, []string{"CODEX_REMOTE_WAIT_HELPER=1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := process.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := process.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRPCProcessHelper(t *testing.T) {
 	if os.Getenv("CODEX_REMOTE_HELPER") != "1" {
 		return
@@ -106,4 +136,17 @@ func TestRPCProcessNotificationHelper(t *testing.T) {
 	fmt.Println(`{"method":"thread/status/changed","params":{"threadId":"thread-1"}}`)
 	fmt.Printf(`{"id":%d,"result":{"echo":%q}}`+"\n", request.ID, request.Method)
 	os.Exit(0)
+}
+
+func TestRPCProcessExitHelper(t *testing.T) {
+	if os.Getenv("CODEX_REMOTE_EXIT_HELPER") == "1" {
+		os.Exit(9)
+	}
+}
+
+func TestRPCProcessWaitHelper(t *testing.T) {
+	if os.Getenv("CODEX_REMOTE_WAIT_HELPER") != "1" {
+		return
+	}
+	_, _ = io.Copy(io.Discard, os.Stdin)
 }

@@ -42,12 +42,15 @@ type Notification struct {
 }
 
 type RPCProcess struct {
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	scan   *bufio.Scanner
-	mu     sync.Mutex
-	nextID uint64
-	notify chan Notification
+	cmd          *exec.Cmd
+	stdin        io.WriteCloser
+	scan         *bufio.Scanner
+	mu           sync.Mutex
+	nextID       uint64
+	notify       chan Notification
+	done         chan error
+	waitComplete chan struct{}
+	closeOnce    sync.Once
 }
 
 func StartRPCProcess(ctx context.Context, command string, args, environment []string) (*RPCProcess, error) {
@@ -64,12 +67,21 @@ func StartRPCProcess(ctx context.Context, command string, args, environment []st
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	return &RPCProcess{
+	process := &RPCProcess{
 		cmd: cmd, stdin: stdin, scan: bufio.NewScanner(stdout), notify: make(chan Notification, 64),
-	}, nil
+		done: make(chan error, 1), waitComplete: make(chan struct{}),
+	}
+	go func() {
+		err := cmd.Wait()
+		process.done <- err
+		close(process.waitComplete)
+	}()
+	return process, nil
 }
 
 func (p *RPCProcess) Notifications() <-chan Notification { return p.notify }
+
+func (p *RPCProcess) Done() <-chan error { return p.done }
 
 func (p *RPCProcess) Notify(_ context.Context, method string, params any) error {
 	p.mu.Lock()
@@ -145,9 +157,14 @@ func (p *RPCProcess) Call(ctx context.Context, method string, params, result any
 }
 
 func (p *RPCProcess) Close() error {
-	_ = p.stdin.Close()
-	if p.cmd.Process != nil {
-		_ = p.cmd.Process.Kill()
+	p.closeOnce.Do(func() {
+		_ = p.stdin.Close()
+		if p.cmd.Process != nil {
+			_ = p.cmd.Process.Kill()
+		}
+	})
+	if p.waitComplete != nil {
+		<-p.waitComplete
 	}
-	return p.cmd.Wait()
+	return nil
 }
