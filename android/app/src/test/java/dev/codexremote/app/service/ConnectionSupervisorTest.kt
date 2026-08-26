@@ -113,6 +113,104 @@ class ConnectionSupervisorTest {
     }
 
     @Test
+    fun networkRecoveryWaitsUntilOldSessionCleanupCompletes() {
+        val closeEntered = java.util.concurrent.CountDownLatch(1)
+        val releaseClose = java.util.concurrent.CountDownLatch(1)
+        val sessions = mutableListOf<ConnectionSession>()
+        val supervisor = ConnectionSupervisor(
+            sessionFactory = ConnectionSessionFactory {
+                object : ConnectionSession {
+                    override fun connect() = Unit
+
+                    override fun close() {
+                        closeEntered.countDown()
+                        releaseClose.await(2, java.util.concurrent.TimeUnit.SECONDS)
+                    }
+
+                    override fun dispose() = Unit
+                }.also(sessions::add)
+            },
+            scheduler = FakeScheduler(),
+            statusListener = ConnectionStatusListener { },
+        )
+        supervisor.start(networkAvailable = true)
+        val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+        try {
+            val unavailable = executor.submit { supervisor.onNetworkUnavailable() }
+            assertTrue(closeEntered.await(1, java.util.concurrent.TimeUnit.SECONDS))
+
+            supervisor.onNetworkAvailable()
+
+            assertEquals(1, sessions.size)
+            releaseClose.countDown()
+            unavailable.get(2, java.util.concurrent.TimeUnit.SECONDS)
+            val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(1)
+            while (sessions.size != 2 && System.nanoTime() < deadline) Thread.yield()
+            assertEquals(2, sessions.size)
+        } finally {
+            releaseClose.countDown()
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun staleStatusCannotOverwriteNewerConnectedStatus() {
+        val waitingStatusEntered = java.util.concurrent.CountDownLatch(1)
+        val releaseWaitingStatus = java.util.concurrent.CountDownLatch(1)
+        val statuses = mutableListOf<ConnectionStatus>()
+        lateinit var callbacks: ConnectionSessionCallbacks
+        val supervisor = ConnectionSupervisor(
+            sessionFactory = ConnectionSessionFactory { createdCallbacks ->
+                callbacks = createdCallbacks
+                FakeSession(createdCallbacks)
+            },
+            scheduler = FakeScheduler(),
+            statusListener = ConnectionStatusListener { status ->
+                if (status == ConnectionStatus.WAITING_FOR_NETWORK) {
+                    waitingStatusEntered.countDown()
+                    releaseWaitingStatus.await(2, java.util.concurrent.TimeUnit.SECONDS)
+                }
+                synchronized(statuses) { statuses += status }
+            },
+        )
+        supervisor.start(networkAvailable = true)
+        callbacks.onConnected()
+        val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+        try {
+            val unavailable = executor.submit { supervisor.onNetworkUnavailable() }
+            assertTrue(waitingStatusEntered.await(1, java.util.concurrent.TimeUnit.SECONDS))
+            supervisor.onNetworkAvailable()
+            callbacks.onConnected()
+            releaseWaitingStatus.countDown()
+            unavailable.get(2, java.util.concurrent.TimeUnit.SECONDS)
+            assertEquals(ConnectionStatus.CONNECTED, synchronized(statuses) { statuses.last() })
+        } finally {
+            releaseWaitingStatus.countDown()
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun schedulerFailureStopsInsteadOfLeavingGhostRetry() {
+        val statuses = mutableListOf<ConnectionStatus>()
+        lateinit var callbacks: ConnectionSessionCallbacks
+        val supervisor = ConnectionSupervisor(
+            sessionFactory = ConnectionSessionFactory { createdCallbacks ->
+                callbacks = createdCallbacks
+                FakeSession(createdCallbacks)
+            },
+            scheduler = RetryScheduler { _, _ -> throw IllegalStateException("scheduler stopped") },
+            statusListener = ConnectionStatusListener { statuses += it },
+        )
+        supervisor.start(networkAvailable = true)
+
+        callbacks.onFailure()
+
+        assertFalse(supervisor.isRunning())
+        assertEquals(ConnectionStatus.STOPPED, statuses.last())
+    }
+
+    @Test
     fun stopCancelsWorkAndIgnoresLateCallbacks() {
         val harness = Harness()
         harness.supervisor.start(networkAvailable = true)
