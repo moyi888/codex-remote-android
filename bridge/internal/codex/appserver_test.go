@@ -21,10 +21,25 @@ func (r *recordingRPC) Call(_ context.Context, method string, params, result any
 		return json.Unmarshal([]byte(`{"thread":{"id":"thread-real-1","preview":""},"model":"gpt-test","modelProvider":"openai","cwd":"D:\\\\code","approvalPolicy":"never","approvalsReviewer":null,"sandbox":{"type":"dangerFullAccess"}}`), result)
 	case "turn/start":
 		return json.Unmarshal([]byte(`{"turn":{"id":"turn-1","status":"inProgress","items":[]}}`), result)
+	case "thread/resume":
+		return json.Unmarshal([]byte(`{"thread":{"id":"thread-real-1"}}`), result)
 	case "model/list":
 		return json.Unmarshal([]byte(`{"data":[{"id":"gpt-test","displayName":"Test Model","supportedReasoningEfforts":[{"reasoningEffort":"high","description":"High"}]}],"nextCursor":null}`), result)
 	default:
 		return fmt.Errorf("unexpected method %s", method)
+	}
+}
+
+func TestAppServerAdapterResumesThreadBeforeSendingTurn(t *testing.T) {
+	rpc := &recordingRPC{}
+	adapter := NewAppServerAdapter(rpc, nil)
+	if err := adapter.SendTurn(context.Background(), SendTurnRequest{
+		ThreadID: "thread-real-1", Prompt: "继续执行",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(rpc.calls) != 2 || rpc.calls[0].method != "thread/resume" || rpc.calls[1].method != "turn/start" {
+		t.Fatalf("unexpected calls: %+v", rpc.calls)
 	}
 }
 

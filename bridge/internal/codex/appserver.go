@@ -140,6 +140,12 @@ func (a *AppServerAdapter) StartTask(ctx context.Context, request StartTaskReque
 }
 
 func (a *AppServerAdapter) SendTurn(ctx context.Context, request SendTurnRequest) error {
+	var resumed any
+	if err := a.rpc.Call(ctx, "thread/resume", map[string]any{
+		"threadId": request.ThreadID,
+	}, &resumed); err != nil {
+		return err
+	}
 	var response any
 	return a.rpc.Call(ctx, "turn/start", map[string]any{
 		"threadId": request.ThreadID,

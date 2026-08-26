@@ -11,10 +11,9 @@ import (
 )
 
 type rpcRequest struct {
-	JSONRPC string `json:"jsonrpc"`
-	ID      uint64 `json:"id"`
-	Method  string `json:"method"`
-	Params  any    `json:"params,omitempty"`
+	ID     uint64 `json:"id"`
+	Method string `json:"method"`
+	Params any    `json:"params,omitempty"`
 }
 
 type rpcResponse struct {
@@ -76,10 +75,9 @@ func (p *RPCProcess) Notify(_ context.Context, method string, params any) error 
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	message := struct {
-		JSONRPC string `json:"jsonrpc"`
-		Method  string `json:"method"`
-		Params  any    `json:"params,omitempty"`
-	}{JSONRPC: "2.0", Method: method, Params: params}
+		Method string `json:"method"`
+		Params any    `json:"params,omitempty"`
+	}{Method: method, Params: params}
 	encoded, err := json.Marshal(message)
 	if err != nil {
 		return err
@@ -92,7 +90,7 @@ func (p *RPCProcess) Call(ctx context.Context, method string, params, result any
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.nextID++
-	request := rpcRequest{JSONRPC: "2.0", ID: p.nextID, Method: method, Params: params}
+	request := rpcRequest{ID: p.nextID, Method: method, Params: params}
 	encoded, err := json.Marshal(request)
 	if err != nil {
 		return err
