@@ -113,7 +113,11 @@ class PendingCommandQueueTest {
         val exposed = queue.list()
 
         @Suppress("UNCHECKED_CAST")
-        (exposed as? MutableList<QueuedCommand>)?.clear()
+        try {
+            (exposed as? MutableList<QueuedCommand>)?.clear()
+        } catch (_: UnsupportedOperationException) {
+            // An immutable snapshot already satisfies the isolation contract.
+        }
 
         assertEquals(1, queue.list().size)
     }
