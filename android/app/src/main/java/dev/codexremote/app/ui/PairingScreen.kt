@@ -34,6 +34,7 @@ data class PairingPresentation(
     val showScanner: Boolean,
     val pasteAvailable: Boolean = true,
     val pasteExpandedByDefault: Boolean,
+    val showAppSettings: Boolean = false,
 )
 
 fun pairingPresentation(permission: CameraPermission): PairingPresentation = when (permission) {
@@ -51,6 +52,7 @@ fun pairingPresentation(permission: CameraPermission): PairingPresentation = whe
         PairingPrimaryAction.PASTE,
         showScanner = false,
         pasteExpandedByDefault = true,
+        showAppSettings = true,
     )
 }
 
@@ -61,6 +63,7 @@ fun PairingScreen(
     cameraPermission: CameraPermission,
     onScannedInvitation: (String) -> Unit,
     onRequestCamera: () -> Unit,
+    onOpenAppSettings: () -> Unit,
     onPasteInvitation: (String) -> Unit,
     onOpenTailscale: () -> Unit,
 ) {
@@ -98,7 +101,15 @@ fun PairingScreen(
             ) {
                 Text("允许相机并扫码")
             }
-            else -> Text("相机权限未开启，你仍可粘贴电脑端的配对链接。")
+            else -> {
+                Text("相机权限未开启，你仍可粘贴电脑端的配对链接。")
+                if (presentation.showAppSettings) {
+                    Spacer(Modifier.height(8.dp))
+                    Button(onClick = onOpenAppSettings, modifier = Modifier.fillMaxWidth()) {
+                        Text("打开应用设置")
+                    }
+                }
+            }
         }
 
         errorMessage?.let {

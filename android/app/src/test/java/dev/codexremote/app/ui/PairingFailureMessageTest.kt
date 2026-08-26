@@ -31,6 +31,13 @@ class PairingFailureMessageTest {
             PairingFailureKind.UNKNOWN,
             PairingFailureMessage.from(IllegalStateException("unknown"), PairingOperation.PAIR).kind,
         )
+        assertEquals(
+            PairingFailureKind.UNKNOWN,
+            PairingFailureMessage.from(
+                BridgeApiException(500, "internal"),
+                PairingOperation.PAIR,
+            ).kind,
+        )
     }
 
     @Test

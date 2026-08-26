@@ -46,6 +46,7 @@ fun RemoteApp(
     cameraPermission: CameraPermission,
     onScannedInvitation: (String) -> Unit,
     onRequestCamera: () -> Unit,
+    onOpenAppSettings: () -> Unit,
     onOpenTailscale: () -> Unit,
     onRefresh: () -> Unit,
     onStartTask: (String, String, String?, String?) -> Unit,
@@ -53,11 +54,12 @@ fun RemoteApp(
 ) {
     when (loadResult) {
         LoadResult.Unpaired -> PairingScreen(
-            busy, null, cameraPermission, onScannedInvitation, onRequestCamera, onPair, onOpenTailscale,
+            busy, null, cameraPermission, onScannedInvitation, onRequestCamera,
+            onOpenAppSettings, onPair, onOpenTailscale,
         )
         is LoadResult.Failed -> PairingScreen(
             busy, loadResult.message, cameraPermission,
-            onScannedInvitation, onRequestCamera, onPair, onOpenTailscale,
+            onScannedInvitation, onRequestCamera, onOpenAppSettings, onPair, onOpenTailscale,
         )
         is LoadResult.Ready -> HomeScreen(
             state = loadResult.state,

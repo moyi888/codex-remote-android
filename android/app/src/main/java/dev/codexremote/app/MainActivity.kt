@@ -2,13 +2,13 @@ package dev.codexremote.app
 
 import android.Manifest
 import android.content.Intent
-import android.content.ActivityNotFoundException
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.net.Uri
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -22,6 +22,7 @@ import dev.codexremote.app.ui.CameraPermission
 import dev.codexremote.app.ui.DeviceIdentity
 import dev.codexremote.app.ui.LoadResult
 import dev.codexremote.app.ui.NotificationPermissionPolicy
+import dev.codexremote.app.ui.PendingPairingInvitation
 import dev.codexremote.app.ui.RemoteApp
 import dev.codexremote.app.ui.RemoteAppController
 import java.time.Instant
@@ -39,10 +40,11 @@ class MainActivity : ComponentActivity() {
     private var busy by mutableStateOf(false)
     private var deliveryMessage by mutableStateOf<String?>(null)
     private var cameraPermission by mutableStateOf(CameraPermission.REQUESTABLE)
+    private val pendingPairingInvitation = PendingPairingInvitation()
     private val cameraPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        cameraPermission = if (granted) CameraPermission.GRANTED else CameraPermission.DENIED
+        cameraPermission = if (granted) CameraPermission.GRANTED else currentCameraPermission()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -66,6 +68,7 @@ class MainActivity : ComponentActivity() {
                     cameraPermission = cameraPermission,
                     onScannedInvitation = ::pair,
                     onRequestCamera = ::requestCameraPermission,
+                    onOpenAppSettings = ::openAppSettings,
                     onOpenTailscale = ::openTailscale,
                     onRefresh = ::resumeConnection,
                     onStartTask = { projectId, prompt, modelId, reasoningId ->
@@ -98,7 +101,10 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 
-    private fun pair(invitation: String) = executeLoad { controller.pair(invitation) }
+    private fun pair(invitation: String) {
+        val ready = pendingPairingInvitation.offer(invitation, busy) ?: return
+        executeLoad { controller.pair(ready) }
+    }
 
     private fun resumeConnection() = executeLoad(controller::resume)
 
@@ -111,6 +117,7 @@ class MainActivity : ComponentActivity() {
             postToActiveActivity {
                 loadResult = result
                 busy = false
+                pendingPairingInvitation.takeAfterLoad()?.let(::pair)
             }
         }
     }
@@ -155,7 +162,12 @@ class MainActivity : ComponentActivity() {
         }
         val requested = getSharedPreferences(CAMERA_PREFERENCES, MODE_PRIVATE)
             .getBoolean(CAMERA_REQUESTED_KEY, false)
-        return if (requested) CameraPermission.DENIED else CameraPermission.REQUESTABLE
+        return when {
+            !requested -> CameraPermission.REQUESTABLE
+            shouldShowRequestPermissionRationale(Manifest.permission.CAMERA) ->
+                CameraPermission.REQUESTABLE
+            else -> CameraPermission.DENIED
+        }
     }
 
     private fun requestCameraPermission() {
@@ -169,11 +181,21 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun openTailscale() {
-        try {
-            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("tailscale:")))
-        } catch (_: ActivityNotFoundException) {
+        val launchIntent = packageManager.getLaunchIntentForPackage(TAILSCALE_PACKAGE)
+        if (launchIntent != null) {
+            startActivity(launchIntent)
+        } else {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(TAILSCALE_ANDROID_URL)))
         }
+    }
+
+    private fun openAppSettings() {
+        startActivity(
+            Intent(
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.fromParts("package", packageName, null),
+            ),
+        )
     }
 
     private fun loadDeviceIdentity(): DeviceIdentity {
@@ -208,5 +230,6 @@ class MainActivity : ComponentActivity() {
         const val CAMERA_PREFERENCES = "camera_permission"
         const val CAMERA_REQUESTED_KEY = "requested"
         const val TAILSCALE_ANDROID_URL = "https://tailscale.com/download/android"
+        const val TAILSCALE_PACKAGE = "com.tailscale.ipn"
     }
 }

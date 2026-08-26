@@ -86,3 +86,35 @@ func TestPairingTokenExpires(t *testing.T) {
 		t.Fatal("expected expired token to be rejected")
 	}
 }
+
+func TestRevokedDeviceCanPairAgainWithSameIdentity(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "bridge.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+	service := NewPairingService(db, func() time.Time { return now })
+	firstToken, _ := service.Issue(time.Minute)
+	firstCredential, err := service.Exchange(firstToken, "phone-1", "Pixel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RevokeDevice("phone-1"); err != nil {
+		t.Fatal(err)
+	}
+	secondToken, _ := service.Issue(time.Minute)
+	secondCredential, err := service.Exchange(secondToken, "phone-1", "Pixel 2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstCredential == secondCredential {
+		t.Fatal("重新配对应轮换凭据")
+	}
+	if ok, err := service.Authenticate("phone-1", firstCredential); err != nil || ok {
+		t.Fatalf("旧凭据不应继续有效: ok=%v err=%v", ok, err)
+	}
+	if ok, err := service.Authenticate("phone-1", secondCredential); err != nil || !ok {
+		t.Fatalf("新凭据应有效: ok=%v err=%v", ok, err)
+	}
+}

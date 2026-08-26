@@ -93,6 +93,17 @@ class AndroidUiContractTest {
         val denied = pairingPresentation(CameraPermission.DENIED)
         assertEquals(PairingPrimaryAction.PASTE, denied.primaryAction)
         assertTrue(denied.pasteAvailable)
+        assertTrue(denied.showAppSettings)
+    }
+
+    @Test
+    fun busyPairingRequestIsReplayedAfterCurrentLoad() {
+        val pending = PendingPairingInvitation()
+        assertEquals(null, pending.offer("first", busy = true))
+        assertEquals(null, pending.offer("latest", busy = true))
+        assertEquals("latest", pending.takeAfterLoad())
+        assertEquals(null, pending.takeAfterLoad())
+        assertEquals("immediate", pending.offer("immediate", busy = false))
     }
 
     private fun org.w3c.dom.Node.attributeValues(

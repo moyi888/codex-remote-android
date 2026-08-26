@@ -167,6 +167,53 @@ func (s *Store) ConsumePairingToken(tokenHash string, now time.Time) (bool, erro
 	return rows == 1, err
 }
 
+func (s *Store) ExchangePairingToken(
+	tokenHash string,
+	now time.Time,
+	deviceID string,
+	deviceName string,
+	credentialHash string,
+) (bool, error) {
+	transaction, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer transaction.Rollback()
+	result, err := transaction.Exec(
+		`UPDATE pairing_tokens SET consumed_at = ?
+         WHERE token_hash = ? AND consumed_at IS NULL AND expires_at > ?`,
+		now.UTC().Format(time.RFC3339Nano), tokenHash, now.UTC().Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if rows != 1 {
+		return false, nil
+	}
+	_, err = transaction.Exec(
+		`INSERT INTO devices (id, name, credential_hash, created_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+             name = excluded.name,
+             credential_hash = excluded.credential_hash,
+             created_at = excluded.created_at,
+             last_seen_at = NULL,
+             revoked_at = NULL`,
+		deviceID, deviceName, credentialHash, now.UTC().Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return false, err
+	}
+	if err := transaction.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (s *Store) AppendEvent(eventType string, payload json.RawMessage, createdAt time.Time) (uint64, error) {
 	result, err := s.db.Exec(
 		`INSERT INTO events (event_type, payload_json, created_at) VALUES (?, ?, ?)`,
