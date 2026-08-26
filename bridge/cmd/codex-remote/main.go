@@ -29,9 +29,18 @@ type serveOptions struct {
 	listen       string
 	advertiseURL string
 	data         string
+	projects     string
+	codexCommand string
 	fake         bool
 	allowPublic  bool
 }
+
+type appServerRuntime interface {
+	codex.RPCTransport
+	Close() error
+}
+
+type appServerStarter func(context.Context, string, []string, []string) (appServerRuntime, error)
 
 func parseServeOptions(args []string) (serveOptions, error) {
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
@@ -39,10 +48,15 @@ func parseServeOptions(args []string) (serveOptions, error) {
 	flags.StringVar(&options.listen, "listen", "127.0.0.1:8787", "Bridge listen address")
 	flags.StringVar(&options.advertiseURL, "advertise-url", "", "Client-reachable Bridge HTTP(S) origin")
 	flags.StringVar(&options.data, "data", "data/bridge.db", "SQLite database path")
+	flags.StringVar(&options.projects, "projects", "", "Path to the allowed project registry JSON")
+	flags.StringVar(&options.codexCommand, "codex-command", "codex", "Codex executable path")
 	flags.BoolVar(&options.fake, "fake", false, "Use the development Codex adapter")
 	flags.BoolVar(&options.allowPublic, "allow-public-listen", false, "Allow non-Tailscale listeners")
 	if err := flags.Parse(args); err != nil {
 		return serveOptions{}, err
+	}
+	if !options.fake && options.projects == "" {
+		return serveOptions{}, fmt.Errorf("real Codex runtime requires --projects")
 	}
 	if err := config.ValidateListenAddress(options.listen, options.allowPublic); err != nil {
 		return serveOptions{}, err
@@ -53,6 +67,36 @@ func parseServeOptions(args []string) (serveOptions, error) {
 	}
 	options.advertiseURL = advertiseURL
 	return options, nil
+}
+
+func startRealAdapter(
+	ctx context.Context,
+	options serveOptions,
+	starter appServerStarter,
+) (codex.Adapter, appServerRuntime, error) {
+	projects, err := codex.LoadProjects(options.projects)
+	if err != nil {
+		return nil, nil, err
+	}
+	runtime, err := starter(ctx, options.codexCommand, []string{"app-server"}, nil)
+	if err != nil {
+		return nil, nil, fmt.Errorf("start Codex app-server: %w", err)
+	}
+	initializeContext, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := codex.InitializeTransport(initializeContext, runtime, version); err != nil {
+		_ = runtime.Close()
+		return nil, nil, fmt.Errorf("initialize Codex app-server: %w", err)
+	}
+	return codex.NewAppServerAdapter(runtime, projects), runtime, nil
+}
+
+func startAppServerProcess(
+	ctx context.Context,
+	command string,
+	args, environment []string,
+) (appServerRuntime, error) {
+	return codex.StartRPCProcess(ctx, command, args, environment)
 }
 
 func normalizeAdvertiseURL(listenAddress, explicit string) (string, error) {
@@ -193,6 +237,8 @@ func pairingOutput(advertiseURL, token string) (string, error) {
 }
 
 func runServe(options serveOptions) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	if err := os.MkdirAll(filepath.Dir(options.data), 0o700); err != nil {
 		return err
 	}
@@ -200,7 +246,12 @@ func runServe(options serveOptions) error {
 	if options.fake {
 		adapter = codex.NewFakeAdapter()
 	} else {
-		return fmt.Errorf("real Codex runtime requires an explicit project registry; use --fake in this alpha build")
+		realAdapter, appServer, err := startRealAdapter(ctx, options, startAppServerProcess)
+		if err != nil {
+			return err
+		}
+		defer appServer.Close()
+		adapter = realAdapter
 	}
 	runtime, err := newRuntime(options.data, adapter)
 	if err != nil {
@@ -216,8 +267,6 @@ func runServe(options serveOptions) error {
 		Addr: options.listen, Handler: runtime.handler,
 		ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second,
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

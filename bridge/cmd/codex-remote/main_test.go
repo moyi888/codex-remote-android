@@ -1,15 +1,41 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/moyi888/codex-remote-android/bridge/internal/codex"
 )
+
+type fakeAppServerRuntime struct {
+	calls         []string
+	notifications []string
+	closed        bool
+}
+
+func (f *fakeAppServerRuntime) Call(_ context.Context, method string, _ any, result any) error {
+	f.calls = append(f.calls, method)
+	return json.Unmarshal([]byte(`{"userAgent":"codex-test"}`), result)
+}
+
+func (f *fakeAppServerRuntime) Notify(_ context.Context, method string, _ any) error {
+	f.notifications = append(f.notifications, method)
+	return nil
+}
+
+func (f *fakeAppServerRuntime) Close() error {
+	f.closed = true
+	return nil
+}
 
 func TestVersionTextIncludesProductAndVersion(t *testing.T) {
 	got := versionText("0.1.0-test")
@@ -60,6 +86,73 @@ func TestParseServeOptionsPreservesDefaultLoopbackStartup(t *testing.T) {
 	}
 	if options.listen != "127.0.0.1:8787" || options.advertiseURL != "" || !options.fake {
 		t.Fatalf("unexpected default options: %+v", options)
+	}
+}
+
+func TestParseServeOptionsRequiresProjectsForRealRuntime(t *testing.T) {
+	_, err := parseServeOptions([]string{})
+	if err == nil || !strings.Contains(err.Error(), "--projects") {
+		t.Fatalf("expected projects requirement, got %v", err)
+	}
+}
+
+func TestParseServeOptionsAcceptsRealRuntimeConfiguration(t *testing.T) {
+	options, err := parseServeOptions([]string{
+		"--projects", `D:\config\projects.json`,
+		"--codex-command", `D:\tools\codex.exe`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if options.projects != `D:\config\projects.json` || options.codexCommand != `D:\tools\codex.exe` || options.fake {
+		t.Fatalf("unexpected options: %+v", options)
+	}
+}
+
+func TestStartRealAdapterInitializesConfiguredAppServer(t *testing.T) {
+	projectPath := t.TempDir()
+	registryPath := filepath.Join(t.TempDir(), "projects.json")
+	registry := `[{"id":"app","displayName":"App","path":` + strconv.Quote(projectPath) + `}]`
+	if err := os.WriteFile(registryPath, []byte(registry), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runtime := &fakeAppServerRuntime{}
+	var command string
+	var arguments []string
+	starter := func(_ context.Context, gotCommand string, gotArguments, _ []string) (appServerRuntime, error) {
+		command = gotCommand
+		arguments = append([]string(nil), gotArguments...)
+		return runtime, nil
+	}
+
+	adapter, closer, err := startRealAdapter(context.Background(), serveOptions{
+		projects: registryPath, codexCommand: "custom-codex",
+	}, starter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closer.Close()
+	projects, err := adapter.ListProjects(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if command != "custom-codex" || len(arguments) != 1 || arguments[0] != "app-server" {
+		t.Fatalf("command=%q arguments=%v", command, arguments)
+	}
+	if len(projects) != 1 || projects[0].ID != "app" || len(runtime.calls) != 1 || runtime.calls[0] != "initialize" || len(runtime.notifications) != 1 || runtime.notifications[0] != "initialized" {
+		t.Fatalf("projects=%+v runtime=%+v", projects, runtime)
+	}
+}
+
+func TestStartRealAdapterFailsClosedWhenRegistryCannotLoad(t *testing.T) {
+	starter := func(context.Context, string, []string, []string) (appServerRuntime, error) {
+		return nil, errors.New("must not start")
+	}
+	_, _, err := startRealAdapter(context.Background(), serveOptions{
+		projects: "missing.json", codexCommand: "codex",
+	}, starter)
+	if err == nil {
+		t.Fatal("real runtime start must fail without falling back to fake")
 	}
 }
 
