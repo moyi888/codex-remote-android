@@ -20,6 +20,7 @@ Tailscale 仍需在电脑和手机上单独安装并完成登录。本项目不�
 在 [GitHub Releases](https://github.com/moyi888/codex-remote-android/releases) 下载：
 
 - `codex-remote-windows-*.exe`：Windows App
+- `codex-remote-cli-windows-*.exe`：保留控制台输出的高级命令行版本
 - `codex-remote-android-*.apk`：Android App
 
 尚未发布 Release 时，也可以从最新 GitHub Actions 的 artifacts 下载开发构建。
@@ -43,10 +44,10 @@ Chrome DevTools MCP 等第三方工具遇到 OAuth、验证码、浏览器登录
 
 ## 高级模式
 
-通常直接双击 Windows EXE 即可。保留命令行模式是为了调试、自定义监听地址或兼容已有部署：
+通常直接双击 `codex-remote-windows-*.exe` 即可，它是不会弹出控制台窗口的托盘 App。命令行模式使用 `codex-remote-cli-windows-*.exe`，用于调试、自定义监听地址或兼容已有部署：
 
 ```powershell
-.\codex-remote.exe serve `
+.\codex-remote-cli-windows-v0.2.0-alpha.1.exe serve `
   --listen 100.88.10.20:8787 `
   --advertise-url http://100.88.10.20:8787 `
   --projects .\projects.json `
@@ -59,7 +60,7 @@ Chrome DevTools MCP 等第三方工具遇到 OAuth、验证码、浏览器登录
 - `--projects`：兼容旧版的显式项目 registry；桌面主流程不需要它。
 - `--codex-command`：指定自定义 Codex 启动命令。
 
-直接运行 `codex-remote.exe version` 可查看版本。高级模式中的监听地址仍应仅对 Tailnet 开放。
+直接运行 `codex-remote-cli-windows-v0.2.0-alpha.1.exe version` 可查看版本（文件名中的版本号以实际下载为准）。高级模式中的监听地址仍应仅对 Tailnet 开放。
 
 ## 从源码验证
 

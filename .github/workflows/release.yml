@@ -26,11 +26,14 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}"
-          go build -ldflags "-X main.version=$version" -o "codex-remote-windows-$version.exe" ./cmd/codex-remote
+          go build -ldflags "-H=windowsgui -X main.version=$version" -o "codex-remote-windows-$version.exe" ./cmd/codex-remote
+          go build -ldflags "-X main.version=$version" -o "codex-remote-cli-windows-$version.exe" ./cmd/codex-remote
       - uses: actions/upload-artifact@v7
         with:
           name: windows-app
-          path: bridge/codex-remote-windows-*.exe
+          path: |
+            bridge/codex-remote-windows-*.exe
+            bridge/codex-remote-cli-windows-*.exe
           if-no-files-found: error
 
   android:

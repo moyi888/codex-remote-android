@@ -38,9 +38,11 @@ foreach ($forbidden in @('--listen', '--advertise-url', 'projects.json')) {
 
 foreach ($text in @(
     'name: Build Windows App',
-    'go build -ldflags "-X main.version=$version" -o "codex-remote-windows-$version.exe" ./cmd/codex-remote',
+    'go build -ldflags "-H=windowsgui -X main.version=$version" -o "codex-remote-windows-$version.exe" ./cmd/codex-remote',
+    'go build -ldflags "-X main.version=$version" -o "codex-remote-cli-windows-$version.exe" ./cmd/codex-remote',
     'name: windows-app',
-    'path: bridge/codex-remote-windows-*.exe'
+    'bridge/codex-remote-windows-*.exe',
+    'bridge/codex-remote-cli-windows-*.exe'
 )) {
     if (-not $release.Contains($text)) {
         throw "Release workflow is missing the Windows App contract: $text"
