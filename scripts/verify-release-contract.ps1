@@ -7,6 +7,7 @@ function ConvertFrom-Utf8Base64([string]$Value) {
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $readme = Get-Content -LiteralPath (Join-Path $repositoryRoot 'README.md') -Raw -Encoding UTF8
 $release = Get-Content -LiteralPath (Join-Path $repositoryRoot '.github/workflows/release.yml') -Raw -Encoding UTF8
+$ci = Get-Content -LiteralPath (Join-Path $repositoryRoot '.github/workflows/ci.yml') -Raw -Encoding UTF8
 
 $requiredQuickStart = @(
     (ConvertFrom-Utf8Base64 'IyMg5Zub5q2l5byA5aeL5L2/55So'),
@@ -43,6 +44,15 @@ foreach ($text in @(
 )) {
     if (-not $release.Contains($text)) {
         throw "Release workflow is missing the Windows App contract: $text"
+    }
+}
+
+foreach ($text in @(
+    'bridge-race:',
+    'go test -race ./...'
+)) {
+    if (-not $ci.Contains($text)) {
+        throw "CI workflow is missing the Bridge race contract: $text"
     }
 }
 
