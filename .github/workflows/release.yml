@@ -1,0 +1,71 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  bridge:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: bridge
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.2"
+          cache-dependency-path: bridge/go.sum
+      - run: go test ./...
+      - run: go vet ./...
+      - name: Build Windows Bridge
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}"
+          go build -ldflags "-X main.version=$version" -o "codex-remote-windows-$version.exe" ./cmd/codex-remote
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-bridge
+          path: bridge/codex-remote-windows-*.exe
+          if-no-files-found: error
+
+  android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+      - uses: android-actions/setup-android@v3
+      - run: chmod +x gradlew
+      - run: ./gradlew testDebugUnitTest assembleDebug --stacktrace
+      - name: Name APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk "codex-remote-android-${{ github.ref_name }}.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: android/codex-remote-android-*.apk
+          if-no-files-found: error
+
+  github-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [bridge, android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" artifacts/* --generate-notes --prerelease

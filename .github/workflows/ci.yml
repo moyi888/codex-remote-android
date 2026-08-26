@@ -39,3 +39,4 @@ jobs:
       - uses: android-actions/setup-android@v3
       - run: chmod +x gradlew
       - run: ./gradlew testDebugUnitTest --stacktrace
+      - run: ./gradlew assembleDebug --stacktrace
