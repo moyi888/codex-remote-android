@@ -1,35 +1,49 @@
 # Codex Remote Android
 
-通过 Tailscale 从 Android 手机连接家中 Windows Bridge，远程查看 Codex 任务、继续对话并新建任务。
+通过 Tailscale 从 Android 手机安全连接家中的 Windows 电脑，远程查看 Codex 任务、继续对话并新建任务。
 
-> 当前为 Alpha 版本。请只在你信任的 Tailnet 内使用，不要把 Bridge 直接暴露到公网。
+> 当前为 Alpha 版本。请只在你信任的 Tailnet 内使用，不要把 Windows App 直接暴露到公网。
 
-## 已实现
+## 四步开始使用
 
-- 一次性深链配对，手机使用独立设备凭据
-- AndroidKeyStore 加密凭据与加密待发命令队列
-- 任务列表、任务摘要、继续对话、新建任务
-- 新建任务可选择项目、模型和推理强度
-- Android 前台服务、WebSocket 事件游标、断线自动重连
-- 仅在 Chrome DevTools MCP 遇到 OAuth、验证码或第三方登录时提醒打开向日葵
-- 普通 Codex 任务使用 `approvalPolicy: never` 和 `dangerFullAccess`，不弹常规审批
-- 显式项目白名单，手机不能选择 registry 之外的目录
+1. 在 Windows 和 Android 安装并登录 Tailscale
+2. 打开 Windows App
+3. 安装 Android App
+4. 用 Android App 扫描 Windows App 显示的二维码
+
+两台设备登录同一个 Tailnet 后，Windows App 会自动发现 Tailscale 地址、启动本地 Bridge 并显示一次性二维码。无需手填 IP、端口或 Tailscale ACL，也无需创建项目白名单配置。
+
+Tailscale 仍需在电脑和手机上单独安装并完成登录。本项目不建设公网中继，因此没有额外服务器、域名或带宽费用。
 
 ## 下载
 
 在 [GitHub Releases](https://github.com/moyi888/codex-remote-android/releases) 下载：
 
-- `codex-remote-windows-*.exe`：Windows Bridge
-- `codex-remote-android-*.apk`：Android 安装包
+- `codex-remote-windows-*.exe`：Windows App
+- `codex-remote-android-*.apk`：Android App
 
 尚未发布 Release 时，也可以从最新 GitHub Actions 的 artifacts 下载开发构建。
 
-## Windows Bridge 配置
+## 可以做什么
 
-1. 确保 Windows 已登录 Codex，`codex` 命令可用；如果不在 `PATH`，启动时传 `--codex-command`。
-2. 安装并登录 Tailscale，记下 Windows 的 `100.x.x.x` Tailnet IP。
-3. 复制 [projects.example.json](config/projects.example.json)，把 `path` 改成真实绝对目录。
-4. 启动 Bridge：
+- 查看 Windows 上全部非归档 Codex 任务，不受单一项目目录限制。
+- 打开已有任务、查看状态并继续发送消息。
+- 新建任务并选择模型、推理强度以及 Codex 历史任务中出现过的目录。
+- 使用一次性二维码配对；每台手机使用独立设备凭据，可在 Windows App 中撤销。
+- AndroidKeyStore 加密凭据与待发命令队列，断线后自动重连。
+- 普通任务使用 `approvalPolicy: never` 和 `dangerFullAccess`，不会弹出常规文件或命令审批。
+
+Codex 不强制使用官方账号登录。官方登录、中转服务或自定义配置均可，只要当前电脑环境能正常启动 Codex `app-server`。Windows App 会自动寻找已配置的 Codex 运行入口。
+
+## 需要在电脑操作的情况
+
+Chrome DevTools MCP 等第三方工具遇到 OAuth、验证码、浏览器登录或授权确认时，手机 App 会尽可能提醒你。此类网页交互仍需打开向日葵等远控工具，在电脑浏览器中完成。
+
+即使授权提示读取失败也不会影响安全性：Codex 任务会停止、失败或在最终回复中说明未授权。完成浏览器授权后，从手机再次要求任务执行即可。
+
+## 高级模式
+
+通常直接双击 Windows EXE 即可。保留命令行模式是为了调试、自定义监听地址或兼容已有部署：
 
 ```powershell
 .\codex-remote.exe serve `
@@ -39,14 +53,13 @@
   --codex-command codex
 ```
 
-Bridge 会输出 5 分钟有效的一次性配对链接。当前命令行先输出链接；二维码终端渲染将在后续版本补充。
+- `serve`：显式启动 Bridge 服务。
+- `--listen`：自定义监听地址。
+- `--advertise-url`：自定义写入配对邀请的访问地址。
+- `--projects`：兼容旧版的显式项目 registry；桌面主流程不需要它。
+- `--codex-command`：指定自定义 Codex 启动命令。
 
-## Android 使用
-
-1. 手机安装 APK，并加入同一个 Tailnet。
-2. 点击电脑输出的 `codex-remote://pair?...` 链接，或复制到 App 配对页。
-3. 配对成功后即可刷新任务、打开任务继续发送，或选择项目/模型/推理强度新建任务。
-4. 收到“需要在电脑上完成授权”通知时，打开向日葵处理第三方浏览器登录/授权，然后回 App 重试。
+直接运行 `codex-remote.exe version` 可查看版本。高级模式中的监听地址仍应仅对 Tailnet 开放。
 
 ## 从源码验证
 
@@ -68,11 +81,11 @@ cd android
 
 ## 当前限制
 
-- 手机详情页当前显示线程摘要并可继续对话；完整历史消息 API 尚在实现中。
+- 手机详情页当前显示任务摘要并可继续对话；完整历史消息 API 尚在实现中。
 - APK 暂为可安装的 debug 签名构建；正式签名与 Play 分发尚未配置。
-- 第三方登录授权必须通过向日葵等远控工具在电脑上完成。
+- 第三方登录和浏览器授权必须通过向日葵等远控工具在电脑上完成。
 
-协议与安全说明见源码和测试。内部设计资料位于本地 `docs/`，按项目策略不进入 Git 历史。
+协议与安全说明见源码和测试。内部设计资料保留在本地 `docs/`，按项目策略不进入 Git 历史。
 
 ## License
 
