@@ -96,6 +96,29 @@ func TestParseServeOptionsRequiresProjectsForRealRuntime(t *testing.T) {
 	}
 }
 
+func TestParseServeOptionsAcceptsHistoryProjectsForDesktopRuntime(t *testing.T) {
+	options, err := parseServeOptions([]string{
+		"--listen", "100.88.10.20:8787",
+		"--history-projects",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !options.historyProjects || options.projects != "" {
+		t.Fatalf("unexpected options: %+v", options)
+	}
+}
+
+func TestParseServeOptionsRejectsAmbiguousProjectSources(t *testing.T) {
+	_, err := parseServeOptions([]string{
+		"--projects", `D:\config\projects.json`,
+		"--history-projects",
+	})
+	if err == nil || !strings.Contains(err.Error(), "choose one") {
+		t.Fatalf("expected exclusive project sources, got %v", err)
+	}
+}
+
 func TestParseServeOptionsAcceptsRealRuntimeConfiguration(t *testing.T) {
 	options, err := parseServeOptions([]string{
 		"--projects", `D:\config\projects.json`,
@@ -141,6 +164,27 @@ func TestStartRealAdapterInitializesConfiguredAppServer(t *testing.T) {
 	}
 	if len(projects) != 1 || projects[0].ID != "app" || len(runtime.calls) != 1 || runtime.calls[0] != "initialize" || len(runtime.notifications) != 1 || runtime.notifications[0] != "initialized" {
 		t.Fatalf("projects=%+v runtime=%+v", projects, runtime)
+	}
+}
+
+func TestStartRealAdapterUsesHistoryProjectCatalog(t *testing.T) {
+	runtime := &fakeAppServerRuntime{}
+	starter := func(context.Context, string, []string, []string) (appServerRuntime, error) {
+		return runtime, nil
+	}
+	adapter, closer, err := startRealAdapter(context.Background(), serveOptions{
+		historyProjects: true,
+		codexCommand:    "codex",
+	}, starter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closer.Close()
+	if _, err := adapter.ListProjects(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(runtime.calls) != 2 || runtime.calls[0] != "initialize" || runtime.calls[1] != "thread/list" {
+		t.Fatalf("calls=%v", runtime.calls)
 	}
 }
 

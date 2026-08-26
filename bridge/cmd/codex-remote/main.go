@@ -26,13 +26,14 @@ import (
 )
 
 type serveOptions struct {
-	listen       string
-	advertiseURL string
-	data         string
-	projects     string
-	codexCommand string
-	fake         bool
-	allowPublic  bool
+	listen          string
+	advertiseURL    string
+	data            string
+	projects        string
+	historyProjects bool
+	codexCommand    string
+	fake            bool
+	allowPublic     bool
 }
 
 type appServerRuntime interface {
@@ -49,14 +50,18 @@ func parseServeOptions(args []string) (serveOptions, error) {
 	flags.StringVar(&options.advertiseURL, "advertise-url", "", "Client-reachable Bridge HTTP(S) origin")
 	flags.StringVar(&options.data, "data", "data/bridge.db", "SQLite database path")
 	flags.StringVar(&options.projects, "projects", "", "Path to the allowed project registry JSON")
+	flags.BoolVar(&options.historyProjects, "history-projects", false, "Derive allowed projects from Codex thread history")
 	flags.StringVar(&options.codexCommand, "codex-command", "codex", "Codex executable path")
 	flags.BoolVar(&options.fake, "fake", false, "Use the development Codex adapter")
 	flags.BoolVar(&options.allowPublic, "allow-public-listen", false, "Allow non-Tailscale listeners")
 	if err := flags.Parse(args); err != nil {
 		return serveOptions{}, err
 	}
-	if !options.fake && options.projects == "" {
-		return serveOptions{}, fmt.Errorf("real Codex runtime requires --projects")
+	if !options.fake && options.projects == "" && !options.historyProjects {
+		return serveOptions{}, fmt.Errorf("real Codex runtime requires --projects or --history-projects")
+	}
+	if options.projects != "" && options.historyProjects {
+		return serveOptions{}, fmt.Errorf("choose one project source: --projects or --history-projects")
 	}
 	if err := config.ValidateListenAddress(options.listen, options.allowPublic); err != nil {
 		return serveOptions{}, err
@@ -74,9 +79,13 @@ func startRealAdapter(
 	options serveOptions,
 	starter appServerStarter,
 ) (codex.Adapter, appServerRuntime, error) {
-	projects, err := codex.LoadProjects(options.projects)
-	if err != nil {
-		return nil, nil, err
+	var projects []codex.Project
+	if !options.historyProjects {
+		var err error
+		projects, err = codex.LoadProjects(options.projects)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	runtime, err := starter(ctx, options.codexCommand, []string{"app-server"}, nil)
 	if err != nil {
@@ -87,6 +96,9 @@ func startRealAdapter(
 	if err := codex.InitializeTransport(initializeContext, runtime, version); err != nil {
 		_ = runtime.Close()
 		return nil, nil, fmt.Errorf("initialize Codex app-server: %w", err)
+	}
+	if options.historyProjects {
+		return codex.NewHistoryAppServerAdapter(runtime), runtime, nil
 	}
 	return codex.NewAppServerAdapter(runtime, projects), runtime, nil
 }
