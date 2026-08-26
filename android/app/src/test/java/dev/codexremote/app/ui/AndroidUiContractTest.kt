@@ -64,6 +64,20 @@ class AndroidUiContractTest {
         assertTrue(NotificationPermissionPolicy.shouldRequest(sdkInt = 33, granted = false))
     }
 
+    @Test
+    fun manifestDeclaresCameraPermissionForQrPairing() {
+        val document = DocumentBuilderFactory.newInstance().apply {
+            isNamespaceAware = true
+        }.newDocumentBuilder().parse(locateManifest())
+        val permissions = document.getElementsByTagName("uses-permission")
+        val names = (0 until permissions.length).map { index ->
+            permissions.item(index).attributes
+                .getNamedItemNS(ANDROID_NAMESPACE, "name").nodeValue
+        }
+
+        assertTrue(names.contains("android.permission.CAMERA"))
+    }
+
     private fun org.w3c.dom.Node.attributeValues(
         childName: String,
         attributeName: String,
