@@ -74,7 +74,8 @@ class CompoundCommandIdentityTest {
 
         val result = outbox.sendOrQueue(command(DEVICE_2))
 
-        assertTrue(result is CommandOutboxResult.Sent)
+        assertTrue(result is SendOrQueueResult.Attempted)
+        assertTrue((result as SendOrQueueResult.Attempted).outcome is CommandOutboxResult.Sent)
         assertEquals(listOf(DEVICE_1), queue.list().map { it.command.deviceId })
         assertEquals(DEVICE_2, requestDevice(server.takeRequest().body.readUtf8()))
     }
@@ -86,11 +87,12 @@ class CompoundCommandIdentityTest {
 
         val result = outbox.sendOrQueue(command(DEVICE_2))
 
-        assertTrue(result is CommandOutboxResult.Queued)
+        assertTrue(result is SendOrQueueResult.Attempted)
+        assertTrue((result as SendOrQueueResult.Attempted).outcome is CommandOutboxResult.Queued)
         val commands = queue.list().associateBy { it.command.deviceId }
         assertEquals(0, commands.getValue(DEVICE_1).attempts)
         assertEquals(1, commands.getValue(DEVICE_2).attempts)
-        assertEquals(DEVICE_2, (result as CommandOutboxResult.Queued).command.command.deviceId)
+        assertEquals(DEVICE_2, result.command.command.deviceId)
     }
 
     @Test

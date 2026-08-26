@@ -52,8 +52,9 @@ class CommandOutboxTest {
 
         val result = outbox.sendOrQueue(command)
 
-        assertTrue(result is CommandOutboxResult.Sent)
-        assertEquals(1, (result as CommandOutboxResult.Sent).command.attempts)
+        assertTrue(result is SendOrQueueResult.Attempted)
+        assertTrue((result as SendOrQueueResult.Attempted).outcome is CommandOutboxResult.Sent)
+        assertEquals(1, result.command.attempts)
         assertTrue(queue.list().isEmpty())
         assertEquals("first", requestKey(server.takeRequest().body.readUtf8()))
     }
@@ -65,8 +66,9 @@ class CommandOutboxTest {
 
         val result = outbox.sendOrQueue(command)
 
-        assertTrue(result is CommandOutboxResult.Rejected)
-        assertEquals(400, (result as CommandOutboxResult.Rejected).statusCode)
+        assertTrue(result is SendOrQueueResult.Attempted)
+        assertTrue((result as SendOrQueueResult.Attempted).outcome is CommandOutboxResult.Rejected)
+        assertEquals(400, (result.outcome as CommandOutboxResult.Rejected).statusCode)
         assertEquals(1, result.command.attempts)
         assertTrue(queue.list().isEmpty())
     }

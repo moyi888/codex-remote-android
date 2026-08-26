@@ -51,7 +51,9 @@ class OrderedCommandDrainingTest {
 
         val result = outbox().sendOrQueue(command("B"))
 
-        assertTrue(result is CommandOutboxResult.Queued)
+        assertTrue(result is SendOrQueueResult.Blocked)
+        assertTrue((result as SendOrQueueResult.Blocked).blocker is CommandOutboxResult.Queued)
+        assertEquals("A", result.blocker.command.command.idempotencyKey)
         assertEquals("B", result.command.command.idempotencyKey)
         assertEquals(0, result.command.attempts)
         assertEquals(1, server.requestCount)
@@ -80,6 +82,22 @@ class OrderedCommandDrainingTest {
     }
 
     @Test
+    fun sendOrQueueReturnsPriorTerminalOutcomeBeforeTargetOutcome() {
+        queue.enqueue(command("A"))
+        server.enqueue(MockResponse().setResponseCode(400))
+        server.enqueue(jsonResponse())
+
+        val result = outbox().sendOrQueue(command("B"))
+
+        assertTrue(result is SendOrQueueResult.Attempted)
+        result as SendOrQueueResult.Attempted
+        assertTrue(result.outcome is CommandOutboxResult.Sent)
+        assertEquals(listOf("A", "B"), result.drainOutcomes.map { it.command.command.idempotencyKey })
+        assertTrue(result.drainOutcomes[0] is CommandOutboxResult.Rejected)
+        assertTrue(queue.list().isEmpty())
+    }
+
+    @Test
     fun authenticationFailureIsRetainedAndBlocksLaterCommands() {
         queue.enqueue(command("A"))
         queue.enqueue(command("B"))
@@ -94,6 +112,30 @@ class OrderedCommandDrainingTest {
         assertEquals(1, server.requestCount)
         assertEquals(listOf("A", "B"), queue.list().map { it.command.idempotencyKey })
         assertEquals(listOf(1, 0), queue.list().map { it.attempts })
+    }
+
+    @Test
+    fun redirectResponseIsTerminalAndDoesNotPoisonQueue() {
+        queue.enqueue(command("A"))
+        server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "/elsewhere"))
+
+        val outcome = outbox().flush().outcomes.single()
+
+        assertTrue(outcome is CommandOutboxResult.Rejected)
+        assertEquals(302, (outcome as CommandOutboxResult.Rejected).statusCode)
+        assertTrue(queue.list().isEmpty())
+    }
+
+    @Test
+    fun invalidSuccessfulResponseIsTerminalAndDoesNotPoisonQueue() {
+        queue.enqueue(command("A"))
+        server.enqueue(MockResponse().setResponseCode(200).setBody("not-json"))
+
+        val outcome = outbox().flush().outcomes.single()
+
+        assertTrue(outcome is CommandOutboxResult.Rejected)
+        assertEquals(200, (outcome as CommandOutboxResult.Rejected).statusCode)
+        assertTrue(queue.list().isEmpty())
     }
 
     @Test
@@ -123,13 +165,18 @@ class OrderedCommandDrainingTest {
             val firstFlush = executor.submit<FlushResult> { outbox().flush() }
             assertTrue(firstRequestEntered.await(1, TimeUnit.SECONDS))
             val secondFlushStarted = CountDownLatch(1)
+            val secondAttempted = CountDownLatch(1)
             val secondFlush = executor.submit<FlushResult> {
                 secondFlushStarted.countDown()
-                outbox().flush()
+                outbox(clock = {
+                    secondAttempted.countDown()
+                    ATTEMPTED_AT
+                }).flush()
             }
             assertTrue(secondFlushStarted.await(1, TimeUnit.SECONDS))
 
             assertFalse(laterRequestEntered.await(200, TimeUnit.MILLISECONDS))
+            assertFalse(secondAttempted.await(200, TimeUnit.MILLISECONDS))
             assertEquals(1, server.requestCount)
 
             releaseFirstRequest.countDown()
@@ -171,11 +218,66 @@ class OrderedCommandDrainingTest {
         }
     }
 
-    private fun outbox(connection: StoredBridgeConnection = connection()) = CommandOutbox(
+    @Test
+    fun sendOrQueueRejectsCommandForDifferentCredentialDeviceBeforeEnqueue() {
+        val mismatched = command("A").copy(deviceId = "phone-2")
+
+        try {
+            outbox().sendOrQueue(mismatched)
+            fail("mismatched command device must be rejected")
+        } catch (_: IllegalArgumentException) {
+            assertTrue(queue.list().isEmpty())
+            assertEquals(0, server.requestCount)
+        }
+    }
+
+    @Test
+    fun differentCredentialDevicesDoNotShareSingleFlightLock() {
+        val otherServer = MockWebServer()
+        otherServer.start()
+        val firstRequestEntered = CountDownLatch(1)
+        val releaseFirstRequest = CountDownLatch(1)
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                firstRequestEntered.countDown()
+                check(releaseFirstRequest.await(2, TimeUnit.SECONDS))
+                return jsonResponse()
+            }
+        }
+        otherServer.enqueue(jsonResponse())
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val first = executor.submit<SendOrQueueResult> { outbox().sendOrQueue(command("A")) }
+            assertTrue(firstRequestEntered.await(1, TimeUnit.SECONDS))
+            val otherQueue = PendingCommandQueue(InMemoryStorage(), XorSecretBox())
+            val otherConnection = StoredBridgeConnection(
+                baseUrl = otherServer.url("/").toString().removeSuffix("/"),
+                credential = DeviceCredential(1, "phone-2", "credential-2"),
+            )
+            val second = executor.submit<SendOrQueueResult> {
+                CommandOutbox(otherQueue, BridgeHttpClient(), otherConnection) { ATTEMPTED_AT }
+                    .sendOrQueue(command("B").copy(deviceId = "phone-2"))
+            }
+
+            assertTrue(second.get(1, TimeUnit.SECONDS) is SendOrQueueResult.Attempted)
+            assertEquals(1, otherServer.requestCount)
+            releaseFirstRequest.countDown()
+            assertTrue(first.get(2, TimeUnit.SECONDS) is SendOrQueueResult.Attempted)
+        } finally {
+            releaseFirstRequest.countDown()
+            executor.shutdownNow()
+            otherServer.shutdown()
+        }
+    }
+
+    private fun outbox(
+        connection: StoredBridgeConnection = connection(),
+        clock: () -> String = { ATTEMPTED_AT },
+    ) = CommandOutbox(
         queue = queue,
         httpClient = BridgeHttpClient(),
         connection = connection,
-        clock = { ATTEMPTED_AT },
+        clock = clock,
     )
 
     private fun connection() = StoredBridgeConnection(
@@ -194,7 +296,9 @@ class OrderedCommandDrainingTest {
     )
 
     private fun takeRequestKeys(count: Int): List<String> = List(count) {
-        requestKey(server.takeRequest().body.readUtf8())
+        val request = server.takeRequest(1, TimeUnit.SECONDS)
+            ?: throw AssertionError("expected HTTP request ${it + 1} of $count")
+        requestKey(request.body.readUtf8())
     }
 
     private fun requestKey(body: String): String = Json.parseToJsonElement(body)
