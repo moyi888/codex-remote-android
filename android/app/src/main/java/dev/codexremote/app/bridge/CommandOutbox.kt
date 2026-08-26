@@ -4,8 +4,6 @@ import dev.codexremote.app.protocol.CommandEnvelope
 import dev.codexremote.app.protocol.CommandResponse
 import dev.codexremote.app.protocol.StoredBridgeConnection
 import java.io.IOException
-import java.util.Collections
-import java.util.WeakHashMap
 
 sealed interface CommandOutboxResult {
     val command: QueuedCommand
@@ -145,15 +143,45 @@ class CommandOutbox(
         this.command.deviceId == command.deviceId &&
             this.command.idempotencyKey == command.idempotencyKey
 
-    private inline fun <T> withDeviceLock(deviceId: String, action: () -> T): T {
-        val lock = synchronized(DEVICE_LOCKS) {
-            DEVICE_LOCKS.getOrPut(deviceId) { Any() }
-        }
-        return synchronized(lock, action)
-    }
+    private fun <T> withDeviceLock(deviceId: String, action: () -> T): T =
+        DEVICE_LOCKS.withLock(deviceId, action)
 
     private companion object {
         val RETRYABLE_STATUS_CODES = setOf(408, 409, 425, 429)
-        val DEVICE_LOCKS: MutableMap<String, Any> = Collections.synchronizedMap(WeakHashMap())
+        val DEVICE_LOCKS = DeviceLockRegistry()
+    }
+}
+
+internal class DeviceLockRegistry {
+    private data class Entry(
+        val lock: Any = Any(),
+        var references: Int = 0,
+    )
+
+    private val entries = mutableMapOf<String, Entry>()
+
+    fun <T> withLock(deviceId: String, action: () -> T): T {
+        val entry = acquire(deviceId)
+        return try {
+            synchronized(entry.lock, action)
+        } finally {
+            release(deviceId, entry)
+        }
+    }
+
+    internal fun referenceCount(deviceId: String): Int = synchronized(entries) {
+        entries[deviceId]?.references ?: 0
+    }
+
+    private fun acquire(deviceId: String): Entry = synchronized(entries) {
+        entries.getOrPut(deviceId) { Entry() }.also { it.references += 1 }
+    }
+
+    private fun release(deviceId: String, entry: Entry) = synchronized(entries) {
+        check(entry.references > 0) { "Device lock reference count underflow" }
+        entry.references -= 1
+        if (entry.references == 0) {
+            entries.remove(deviceId, entry)
+        }
     }
 }
