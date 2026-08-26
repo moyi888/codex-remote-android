@@ -44,10 +44,12 @@ class AndroidUiContractTest {
         })
         assertTrue(filters.any { filter ->
             val actions = filter.attributeValues("action", "name")
+            if (!actions.contains(Intent.ACTION_VIEW)) return@any false
             val categories = filter.attributeValues("category", "name")
-            val data = filter.childNodes.asSequence().filter { it.nodeName == "data" }.single()
-            actions.contains(Intent.ACTION_VIEW) &&
-                categories.contains(Intent.CATEGORY_DEFAULT) &&
+            val data = filter.childNodes.asSequence()
+                .filter { it.nodeName == "data" }
+                .singleOrNull() ?: return@any false
+            categories.contains(Intent.CATEGORY_DEFAULT) &&
                 categories.contains(Intent.CATEGORY_BROWSABLE) &&
                 data.attributes.getNamedItemNS(ANDROID_NAMESPACE, "scheme").nodeValue ==
                 "codex-remote" &&
