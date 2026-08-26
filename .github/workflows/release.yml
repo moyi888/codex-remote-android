@@ -15,8 +15,8 @@ jobs:
       run:
         working-directory: bridge
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.24.2"
           cache-dependency-path: bridge/go.sum
@@ -27,7 +27,7 @@ jobs:
         run: |
           $version = "${{ github.ref_name }}"
           go build -ldflags "-X main.version=$version" -o "codex-remote-windows-$version.exe" ./cmd/codex-remote
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows-bridge
           path: bridge/codex-remote-windows-*.exe
@@ -39,18 +39,18 @@ jobs:
       run:
         working-directory: android
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
           cache: gradle
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
       - run: chmod +x gradlew
       - run: ./gradlew testDebugUnitTest assembleDebug --stacktrace
       - name: Name APK
         run: cp app/build/outputs/apk/debug/app-debug.apk "codex-remote-android-${{ github.ref_name }}.apk"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: android-apk
           path: android/codex-remote-android-*.apk
@@ -61,7 +61,7 @@ jobs:
     needs: [bridge, android]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           path: artifacts
           merge-multiple: true
