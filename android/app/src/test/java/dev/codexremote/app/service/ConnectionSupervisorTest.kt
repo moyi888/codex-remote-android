@@ -116,7 +116,7 @@ class ConnectionSupervisorTest {
     fun networkRecoveryWaitsUntilOldSessionCleanupCompletes() {
         val closeEntered = java.util.concurrent.CountDownLatch(1)
         val releaseClose = java.util.concurrent.CountDownLatch(1)
-        val sessions = mutableListOf<ConnectionSession>()
+        val sessions = java.util.Collections.synchronizedList(mutableListOf<ConnectionSession>())
         val supervisor = ConnectionSupervisor(
             sessionFactory = ConnectionSessionFactory {
                 object : ConnectionSession {
