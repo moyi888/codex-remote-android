@@ -1,6 +1,7 @@
 package dev.codexremote.app.service
 
 import dev.codexremote.app.protocol.EventEnvelope
+import dev.codexremote.app.protocol.Attention
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
@@ -68,6 +69,21 @@ class AttentionPolicyTest {
         assertFalse(notice.body.contains(secret))
         assertFalse(notice.body.contains("github.com/"))
         assertEquals("需要在电脑上完成授权", notice.title)
+    }
+
+    @Test
+    fun snapshotAttentionUsesSameSafePolicy() {
+        val notice = AttentionPolicy.fromAttention(
+            Attention(
+                category = "oauth",
+                site = "GitHub.com",
+                confidence = 0.8,
+                detectedAt = "2026-08-26T01:00:00Z",
+            ),
+        )
+
+        requireNotNull(notice)
+        assertTrue(notice.body.contains("github.com"))
     }
 
     private fun event(
