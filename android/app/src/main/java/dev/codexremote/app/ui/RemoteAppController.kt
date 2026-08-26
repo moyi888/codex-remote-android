@@ -15,7 +15,9 @@ sealed interface LoadResult {
 
     data class Ready(val state: RemoteAppState) : LoadResult
 
-    data class Failed(val message: String) : LoadResult
+    data class Failed(val failure: PairingFailureMessage) : LoadResult {
+        val message: String get() = failure.text
+    }
 }
 
 enum class CommandDelivery {
@@ -53,12 +55,12 @@ class RemoteAppController(
 ) {
     private var connection: StoredBridgeConnection? = null
 
-    fun resume(): LoadResult = safelyLoad {
+    fun resume(): LoadResult = safelyLoad(PairingOperation.RESUME) {
         val stored = gateway.loadConnection() ?: return LoadResult.Unpaired
         load(stored)
     }
 
-    fun pair(rawInvitation: String): LoadResult = safelyLoad {
+    fun pair(rawInvitation: String): LoadResult = safelyLoad(PairingOperation.PAIR) {
         val invitation = PairingInvitation.parse(rawInvitation.trim())
         val paired = gateway.exchange(invitation, device)
         gateway.saveConnection(paired)
@@ -97,9 +99,12 @@ class RemoteAppController(
         }
     }
 
-    private inline fun safelyLoad(action: () -> LoadResult): LoadResult = try {
+    private inline fun safelyLoad(
+        operation: PairingOperation,
+        action: () -> LoadResult,
+    ): LoadResult = try {
         action()
-    } catch (_: Exception) {
-        LoadResult.Failed("无法连接到 Codex Bridge，请检查配对信息和 Tailscale 网络。")
+    } catch (error: Exception) {
+        LoadResult.Failed(PairingFailureMessage.from(error, operation))
     }
 }
