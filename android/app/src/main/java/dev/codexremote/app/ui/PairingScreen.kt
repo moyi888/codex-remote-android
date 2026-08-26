@@ -22,6 +22,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import dev.codexremote.app.scanner.PairingScanner
 
@@ -66,6 +67,9 @@ fun PairingScreen(
     onOpenAppSettings: () -> Unit,
     onPasteInvitation: (String) -> Unit,
     onOpenTailscale: () -> Unit,
+    scanner: @Composable ((String) -> Unit, Modifier) -> Unit = { onInvitation, modifier ->
+        PairingScanner(onInvitation = onInvitation, modifier = modifier)
+    },
 ) {
     val presentation = pairingPresentation(cameraPermission)
     var pasteExpanded by remember(cameraPermission) {
@@ -91,13 +95,13 @@ fun PairingScreen(
                 Spacer(Modifier.height(12.dp))
                 Text("正在连接…")
             }
-            presentation.showScanner -> PairingScanner(
-                onInvitation = onScannedInvitation,
-                modifier = Modifier.fillMaxWidth().height(360.dp),
+            presentation.showScanner -> scanner(
+                onScannedInvitation,
+                Modifier.fillMaxWidth().height(360.dp),
             )
             presentation.primaryAction == PairingPrimaryAction.REQUEST_CAMERA -> Button(
                 onClick = onRequestCamera,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().testTag("request-camera"),
             ) {
                 Text("允许相机并扫码")
             }
@@ -105,7 +109,10 @@ fun PairingScreen(
                 Text("相机权限未开启，你仍可粘贴电脑端的配对链接。")
                 if (presentation.showAppSettings) {
                     Spacer(Modifier.height(8.dp))
-                    Button(onClick = onOpenAppSettings, modifier = Modifier.fillMaxWidth()) {
+                    Button(
+                        onClick = onOpenAppSettings,
+                        modifier = Modifier.fillMaxWidth().testTag("open-app-settings"),
+                    ) {
                         Text("打开应用设置")
                     }
                 }
@@ -114,21 +121,29 @@ fun PairingScreen(
 
         errorMessage?.let {
             Spacer(Modifier.height(12.dp))
-            Text(it, color = MaterialTheme.colorScheme.error)
+            Text(
+                it,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.testTag("pairing-error"),
+            )
         }
         Spacer(Modifier.height(12.dp))
         TextButton(onClick = onOpenTailscale, enabled = !busy) {
             Text("打开 Tailscale")
         }
         if (!pasteExpanded) {
-            TextButton(onClick = { pasteExpanded = true }, enabled = !busy) {
+            TextButton(
+                onClick = { pasteExpanded = true },
+                enabled = !busy,
+                modifier = Modifier.testTag("paste-toggle"),
+            ) {
                 Text("无法扫码？粘贴配对链接")
             }
         } else {
             OutlinedTextField(
                 value = invitation,
                 onValueChange = { invitation = it },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().testTag("paste-field"),
                 label = { Text("codex-remote:// 配对链接") },
                 minLines = 3,
                 enabled = !busy,
@@ -137,7 +152,7 @@ fun PairingScreen(
             Button(
                 onClick = { onPasteInvitation(invitation) },
                 enabled = !busy && invitation.isNotBlank(),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().testTag("pair-from-paste"),
             ) {
                 Text("使用链接配对")
             }

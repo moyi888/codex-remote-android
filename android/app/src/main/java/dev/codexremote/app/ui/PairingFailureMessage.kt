@@ -7,7 +7,7 @@ enum class PairingFailureKind { EXPIRED, UNREACHABLE, REVOKED, UNKNOWN }
 
 enum class PairingOperation { PAIR, RESUME }
 
-data class PairingFailureMessage private constructor(
+class PairingFailureMessage private constructor(
     val kind: PairingFailureKind,
     val text: String,
 ) {
