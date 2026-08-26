@@ -64,16 +64,9 @@ class PairingAnalysisSession(
         start: (((List<String>) -> Unit) -> Unit),
         closeFrame: () -> Unit,
     ) {
-        synchronized(lock) {
-            if (closed || processing) {
-                closeFrame()
-                return
-            }
-            processing = true
-        }
-
         val finished = AtomicBoolean(false)
-        val finish: (List<String>) -> Unit = finish@{ rawValues ->
+        lateinit var finish: (List<String>) -> Unit
+        finish = finish@{ rawValues ->
             if (!finished.compareAndSet(false, true)) return@finish
             try {
                 synchronized(lock) {
@@ -91,8 +84,18 @@ class PairingAnalysisSession(
                 closeFrame()
             }
         }
-        synchronized(lock) {
-            finishActiveFrame = { finish(emptyList()) }
+        val accepted = synchronized(lock) {
+            if (closed || processing) {
+                false
+            } else {
+                processing = true
+                finishActiveFrame = { finish(emptyList()) }
+                true
+            }
+        }
+        if (!accepted) {
+            closeFrame()
+            return
         }
         try {
             start(finish)
