@@ -93,6 +93,7 @@ class AndroidUiContractTest {
         val denied = pairingPresentation(CameraPermission.DENIED)
         assertEquals(PairingPrimaryAction.PASTE, denied.primaryAction)
         assertTrue(denied.pasteAvailable)
+        assertFalse(denied.pasteExpandedByDefault)
         assertTrue(denied.showAppSettings)
     }
 
