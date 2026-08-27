@@ -14,12 +14,32 @@ $englishReadme = Get-Content -LiteralPath $englishReadmePath -Raw -Encoding UTF8
 $release = Get-Content -LiteralPath (Join-Path $repositoryRoot '.github/workflows/release.yml') -Raw -Encoding UTF8
 $ci = Get-Content -LiteralPath (Join-Path $repositoryRoot '.github/workflows/ci.yml') -Raw -Encoding UTF8
 $androidBuild = Get-Content -LiteralPath (Join-Path $repositoryRoot 'android/app/build.gradle.kts') -Raw -Encoding UTF8
+$windowsCommandDirectory = Join-Path $repositoryRoot 'bridge/cmd/codex-remote'
+$windowsManifestPath = Join-Path $windowsCommandDirectory 'codex-remote.manifest'
+$windowsResourcePath = Join-Path $windowsCommandDirectory 'rsrc_windows_amd64.syso'
+
+if (-not (Test-Path -LiteralPath $windowsManifestPath -PathType Leaf)) {
+    throw 'Windows application manifest is missing: bridge/cmd/codex-remote/codex-remote.manifest'
+}
+$windowsManifest = Get-Content -LiteralPath $windowsManifestPath -Raw -Encoding UTF8
+foreach ($text in @(
+    'Microsoft.Windows.Common-Controls',
+    'version="6.0.0.0"',
+    'requestedExecutionLevel level="asInvoker" uiAccess="false"'
+)) {
+    if (-not $windowsManifest.Contains($text)) {
+        throw "Windows application manifest is missing required compatibility metadata: $text"
+    }
+}
+if (-not (Test-Path -LiteralPath $windowsResourcePath -PathType Leaf)) {
+    throw 'Compiled Windows AMD64 manifest resource is missing: bridge/cmd/codex-remote/rsrc_windows_amd64.syso'
+}
 
 $requiredQuickStart = @(
     (ConvertFrom-Utf8Base64 'IyMg5Zub5q2l5byA5aeL5L2/55So'),
     'https://tailscale.com/download/windows',
     'https://tailscale.com/download/android',
-    'https://github.com/moyi888/codex-remote-android/releases/tag/v0.2.0-alpha.1',
+    'https://github.com/moyi888/codex-remote-android/releases/tag/v0.2.0-alpha.2',
     (ConvertFrom-Utf8Base64 'NC4g55SoIEFuZHJvaWQgQXBwIOaJq+aPjyBXaW5kb3dzIEFwcCDmmL7npLrnmoTkuoznu7TnoIE=')
 )
 foreach ($text in $requiredQuickStart) {
@@ -46,7 +66,7 @@ foreach ($text in @(
     '[English](README.en.md)',
     'https://tailscale.com/download/windows',
     'https://tailscale.com/download/android',
-    'https://github.com/moyi888/codex-remote-android/releases/tag/v0.2.0-alpha.1'
+    'https://github.com/moyi888/codex-remote-android/releases/tag/v0.2.0-alpha.2'
 )) {
     if (-not $readme.Contains($text)) {
         throw "Chinese README is missing bilingual/download contract: $text"
@@ -58,7 +78,7 @@ foreach ($text in @(
     '## Get started in four steps',
     'https://tailscale.com/download/windows',
     'https://tailscale.com/download/android',
-    'https://github.com/moyi888/codex-remote-android/releases/tag/v0.2.0-alpha.1'
+    'https://github.com/moyi888/codex-remote-android/releases/tag/v0.2.0-alpha.2'
 )) {
     if (-not $englishReadme.Contains($text)) {
         throw "English README is missing bilingual/download contract: $text"
@@ -69,6 +89,8 @@ foreach ($text in @(
     'name: Build Windows App',
     'go build -ldflags "-H=windowsgui -X main.version=$version" -o "codex-remote-windows-$version.exe" ./cmd/codex-remote',
     'go build -ldflags "-X main.version=$version" -o "codex-remote-cli-windows-$version.exe" ./cmd/codex-remote',
+    '../scripts/verify-windows-executable.ps1 -Path "codex-remote-windows-$version.exe" -ExpectedSubsystem WindowsGui',
+    '../scripts/verify-windows-executable.ps1 -Path "codex-remote-cli-windows-$version.exe" -ExpectedSubsystem Console',
     'name: windows-app',
     'bridge/codex-remote-windows-*.exe',
     'bridge/codex-remote-cli-windows-*.exe'
@@ -80,7 +102,9 @@ foreach ($text in @(
 
 foreach ($text in @(
     'bridge-race:',
-    'go test -race ./...'
+    'go test -race ./...',
+    '../scripts/verify-windows-executable.ps1 -Path codex-remote-windows.exe -ExpectedSubsystem WindowsGui',
+    '../scripts/verify-windows-executable.ps1 -Path codex-remote-cli-windows.exe -ExpectedSubsystem Console'
 )) {
     if (-not $ci.Contains($text)) {
         throw "CI workflow is missing the Bridge race contract: $text"
@@ -88,8 +112,8 @@ foreach ($text in @(
 }
 
 foreach ($text in @(
-    'versionCode = 2',
-    'versionName = "0.2.0-alpha.1"'
+    'versionCode = 3',
+    'versionName = "0.2.0-alpha.2"'
 )) {
     if (-not $androidBuild.Contains($text)) {
         throw "Android release metadata is missing: $text"
