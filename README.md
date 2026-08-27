@@ -1,23 +1,25 @@
 # Codex Remote Android
 
+[English](README.en.md) | 简体中文
+
 通过 Tailscale 从 Android 手机安全连接家中的 Windows 电脑，远程查看 Codex 任务、继续对话并新建任务。
 
 > 当前为 Alpha 版本。请只在你信任的 Tailnet 内使用，不要把 Windows App 直接暴露到公网。
 
 ## 四步开始使用
 
-1. 在 Windows 和 Android 安装并登录 Tailscale
-2. 打开 Windows App
-3. 安装 Android App
+1. 电脑安装并登录 [Tailscale for Windows](https://tailscale.com/download/windows)
+2. 手机安装并登录 [Tailscale for Android](https://tailscale.com/download/android)
+3. 从 [v0.2.0-alpha.1 发布页](https://github.com/moyi888/codex-remote-android/releases/tag/v0.2.0-alpha.1)下载并打开 Windows App，同时安装 Android APK
 4. 用 Android App 扫描 Windows App 显示的二维码
 
-两台设备登录同一个 Tailnet 后，Windows App 会自动发现 Tailscale 地址、启动本地 Bridge 并显示一次性二维码。无需手填 IP、端口或 Tailscale ACL，也无需创建项目白名单配置。
+Tailnet 是同一 Tailscale 账号或组织下设备组成的私有网络。两台设备登录同一个 Tailnet 后，Windows App 会自动发现 Tailscale 地址、启动本地 Bridge 并显示一次性二维码。无需手填 IP、端口或 Tailscale ACL，也无需创建项目白名单配置。
 
 Tailscale 仍需在电脑和手机上单独安装并完成登录。本项目不建设公网中继，因此没有额外服务器、域名或带宽费用。
 
 ## 下载
 
-在 [GitHub Releases](https://github.com/moyi888/codex-remote-android/releases) 下载：
+在 [v0.2.0-alpha.1 发布页](https://github.com/moyi888/codex-remote-android/releases/tag/v0.2.0-alpha.1)下载：
 
 - `codex-remote-windows-*.exe`：Windows App
 - `codex-remote-cli-windows-*.exe`：保留控制台输出的高级命令行版本
