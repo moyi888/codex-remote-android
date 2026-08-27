@@ -28,6 +28,8 @@ jobs:
           $version = "${{ github.ref_name }}"
           go build -ldflags "-H=windowsgui -X main.version=$version" -o "codex-remote-windows-$version.exe" ./cmd/codex-remote
           go build -ldflags "-X main.version=$version" -o "codex-remote-cli-windows-$version.exe" ./cmd/codex-remote
+          ../scripts/verify-windows-executable.ps1 -Path "codex-remote-windows-$version.exe" -ExpectedSubsystem WindowsGui
+          ../scripts/verify-windows-executable.ps1 -Path "codex-remote-cli-windows-$version.exe" -ExpectedSubsystem Console
       - uses: actions/upload-artifact@v7
         with:
           name: windows-app

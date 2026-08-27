@@ -26,6 +26,11 @@ jobs:
         run: go build -ldflags "-H=windowsgui -X main.version=ci" -o codex-remote-windows.exe ./cmd/codex-remote
       - name: Build Windows CLI
         run: go build -ldflags "-X main.version=ci" -o codex-remote-cli-windows.exe ./cmd/codex-remote
+      - name: Verify Windows executables
+        shell: pwsh
+        run: |
+          ../scripts/verify-windows-executable.ps1 -Path codex-remote-windows.exe -ExpectedSubsystem WindowsGui
+          ../scripts/verify-windows-executable.ps1 -Path codex-remote-cli-windows.exe -ExpectedSubsystem Console
 
   bridge-race:
     runs-on: ubuntu-latest
