@@ -100,10 +100,7 @@ class BridgeHttpClient(
     private inline fun <reified T> jsonBody(value: T) =
         json.encodeToString(value).toRequestBody(JSON_MEDIA_TYPE)
 
-    private inline fun <reified T> execute(request: Request): T =
-        executeLogged(request)
-
-    private inline fun <reified T> executeLogged(request: Request): T {
+    private inline fun <reified T> execute(request: Request): T {
         val startedAt = System.nanoTime()
         logs.info("http", "request ${request.method} ${request.url.encodedPath}")
         return try {
