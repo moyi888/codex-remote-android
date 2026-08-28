@@ -11,7 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -175,7 +175,7 @@ private fun ThreadList(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        items(threads, key = { it.id }) { thread ->
+        itemsIndexed(threads, key = ::threadListItemKey) { _, thread ->
             Card(Modifier.fillMaxWidth().clickable { onSelect(thread) }) {
                 Column(Modifier.padding(16.dp)) {
                     Text(thread.title, fontWeight = FontWeight.SemiBold)
@@ -187,6 +187,9 @@ private fun ThreadList(
         }
     }
 }
+
+internal fun threadListItemKey(index: Int, thread: ThreadSummary): String =
+    "${thread.id}#$index"
 
 @Composable
 private fun ThreadDetailScreen(
