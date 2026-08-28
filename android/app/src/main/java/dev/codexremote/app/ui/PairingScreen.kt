@@ -15,8 +15,10 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -128,15 +130,12 @@ private fun AddComputerScreen(
     onPasteInvitation: () -> Unit,
     onOpenLogs: () -> Unit,
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(24.dp),
+    Scaffold(topBar = { TopAppBar(title = { Text("Codex Remote") }) }) { innerPadding ->
+      Column(
+        modifier = Modifier.fillMaxSize().padding(innerPadding).verticalScroll(rememberScrollState()).padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
-    ) {
-        Text("Codex Remote", style = MaterialTheme.typography.headlineMedium)
+      ) {
         Spacer(Modifier.height(8.dp))
         Text("扫描电脑上的二维码，即可通过 Tailscale 连接家中 Codex。")
         Spacer(Modifier.height(20.dp))
@@ -186,6 +185,7 @@ private fun AddComputerScreen(
                 Text("使用链接配对")
             }
         }
+      }
     }
 }
 
@@ -200,22 +200,18 @@ private fun ScannerScreen(
     onClose: () -> Unit,
     scanner: @Composable ((String) -> Unit, Modifier) -> Unit,
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(24.dp),
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("扫描电脑二维码") },
+                navigationIcon = { TextButton(onClick = onClose, modifier = Modifier.testTag("close-scanner")) { Text("返回") } },
+            )
+        },
+    ) { innerPadding ->
+      Column(
+        modifier = Modifier.fillMaxSize().padding(innerPadding).verticalScroll(rememberScrollState()).padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
-            TextButton(
-                onClick = onClose,
-                modifier = Modifier.testTag("close-scanner"),
-            ) {
-                Text("关闭扫码")
-            }
-        }
-        Text("扫描电脑二维码", style = MaterialTheme.typography.headlineMedium)
+      ) {
         Spacer(Modifier.height(8.dp))
         Text("将电脑端显示的二维码放入取景框。")
         Spacer(Modifier.height(20.dp))
@@ -250,6 +246,7 @@ private fun ScannerScreen(
             }
         }
         PairingError(errorMessage)
+      }
     }
 }
 

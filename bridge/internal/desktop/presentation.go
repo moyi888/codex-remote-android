@@ -10,6 +10,7 @@ const (
 	ChooseCodex       ViewAction = "choose_codex"
 	RetryDetection    ViewAction = "retry_detection"
 	RefreshInvitation ViewAction = "refresh_invitation"
+	AddDevice         ViewAction = "add_device"
 )
 
 type DesktopView struct {
@@ -45,6 +46,11 @@ func Present(state DesktopState) DesktopView {
 	case Connected:
 		return DesktopView{
 			Title: "已连接", Description: "手机已配对，可以远程查看和继续任务。",
+			ShowDevices: true, PrimaryAction: AddDevice,
+		}
+	case PairingForAdditionalDevice:
+		return DesktopView{
+			Title: "添加新设备", Description: "请使用 Android App 扫描二维码完成配对。",
 			ShowQR: true, ShowDevices: true, PrimaryAction: RefreshInvitation,
 		}
 	default:

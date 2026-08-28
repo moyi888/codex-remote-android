@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.CodexRemote" parent="android:style/Theme.DeviceDefault.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#4267B2</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">#171923</item>
+        <item name="android:navigationBarColor">#FAF7FF</item>
+    </style>
+</resources>

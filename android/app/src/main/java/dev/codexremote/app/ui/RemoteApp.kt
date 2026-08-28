@@ -2,6 +2,7 @@ package dev.codexremote.app.ui
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -22,6 +23,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -222,73 +224,66 @@ private fun ThreadDetailScreen(
     onLoadMore: (String, String) -> Unit,
 ) {
     var prompt by remember(thread.id) { mutableStateOf("") }
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
-        contentPadding = PaddingValues(top = 16.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        val activeTurn = thread.activeTurnId
-        val canSteerCurrent = activeTurn != null && thread.state == ThreadState.RUNNING && canSteer
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(thread.title, style = MaterialTheme.typography.headlineSmall)
-                Text("项目：${thread.projectName}")
-                Text("状态：${thread.state.label()}")
-                Text("更新时间：${thread.updatedAt}")
-                thread.attention?.let(ThreadAttentionMessage::from)?.let { AttentionNotice(it) }
-                HorizontalDivider()
-            }
+    val activeTurn = thread.activeTurnId
+    val canSteerCurrent = activeTurn != null && thread.state == ThreadState.RUNNING && canSteer
+    Column(Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(thread.title, style = MaterialTheme.typography.titleLarge, maxLines = 2)
+            Text("${thread.projectName} · ${thread.state.label()}")
+            thread.attention?.let(ThreadAttentionMessage::from)?.let { AttentionNotice(it) }
         }
-        when {
-            history == null -> item { Text("正在读取历史对话…", color = MaterialTheme.colorScheme.secondary) }
-            history.entries.isEmpty() -> item { Text("暂无可显示的历史消息。", color = MaterialTheme.colorScheme.secondary) }
-            else -> {
-                itemsIndexed(history.entries, key = { _, entry -> entry.id }) { _, entry ->
-                    Card(Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(12.dp)) {
-                            Text(entry.kind, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                            Text(entry.text, style = MaterialTheme.typography.bodyLarge)
-                            entry.status?.let { Text(it, style = MaterialTheme.typography.labelSmall) }
+        HorizontalDivider()
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                contentPadding = PaddingValues(vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                when {
+                    history == null -> item { Text("正在读取历史对话…", color = MaterialTheme.colorScheme.secondary) }
+                    history.entries.isEmpty() -> item { Text("暂无可显示的历史消息。", color = MaterialTheme.colorScheme.secondary) }
+                    else -> {
+                        itemsIndexed(history.entries, key = { _, entry -> entry.id }) { _, entry ->
+                            Card(Modifier.fillMaxWidth()) {
+                                Column(Modifier.padding(12.dp)) {
+                                    Text(entry.kind, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                                    Text(entry.text, style = MaterialTheme.typography.bodyLarge)
+                                    entry.status?.let { Text(it, style = MaterialTheme.typography.labelSmall) }
+                                }
+                            }
+                        }
+                        history.nextCursor?.let { cursor ->
+                            item { TextButton(onClick = { onLoadMore(thread.id, cursor) }, enabled = !busy) { Text("加载更早记录") } }
                         }
                     }
                 }
-                history.nextCursor?.let { cursor ->
-                    item {
-                        TextButton(onClick = { onLoadMore(thread.id, cursor) }, enabled = !busy) {
-                            Text(if (busy) "加载中…" else "加载更早记录")
-                        }
-                    }
-                }
             }
         }
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Surface(tonalElevation = 3.dp) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 OutlinedTextField(
                     value = prompt,
                     onValueChange = { prompt = it },
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("继续对话") },
-                    minLines = 4,
+                    minLines = 2,
+                    maxLines = 5,
                     enabled = !busy && (canSend || canSteerCurrent),
                 )
-                Button(
-                    onClick = { onSend(thread.id, prompt) },
-                    enabled = !busy && canSend && prompt.isNotBlank(),
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text(if (busy) "发送中…" else "发送新一轮") }
-                if (canSteerCurrent) {
-                    Button(
-                        onClick = { onSteer(thread.id, activeTurn!!, prompt) },
-                        enabled = !busy && prompt.isNotBlank(),
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text(if (busy) "发送中…" else "追加到当前执行") }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    Button(onClick = { onSend(thread.id, prompt) }, enabled = !busy && canSend && prompt.isNotBlank(), modifier = Modifier.weight(1f)) { Text("发送新一轮") }
+                    if (canSteerCurrent) {
+                        Button(onClick = { onSteer(thread.id, activeTurn!!, prompt) }, enabled = !busy && prompt.isNotBlank(), modifier = Modifier.weight(1f)) { Text("追加") }
+                    }
                 }
                 if (activeTurn != null && thread.state == ThreadState.RUNNING && canInterrupt) {
-                    Button(
-                        onClick = { onInterrupt(thread.id, activeTurn) },
-                        enabled = !busy,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text(if (busy) "处理中…" else "中止当前执行") }
+                    TextButton(onClick = { onInterrupt(thread.id, activeTurn) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("中止当前执行") }
                 }
             }
         }

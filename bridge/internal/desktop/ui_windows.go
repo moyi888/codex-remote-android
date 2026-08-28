@@ -89,6 +89,7 @@ func RunApplication(version string) error {
 		currentAction   ViewAction
 		currentIDs      []string
 		currentBitmap   *walk.Bitmap
+		currentQRBytes  []byte
 		exiting         bool
 		uiMu            sync.Mutex
 	)
@@ -110,6 +111,8 @@ func RunApplication(version string) error {
 			chooseCodexExecutable(mainWindow, probe, controller, actions)
 		case RefreshInvitation:
 			actions.Go(func(actionCtx context.Context) { _ = controller.RefreshInvitation(actionCtx) })
+		case AddDevice:
+			actions.Go(func(actionCtx context.Context) { _ = controller.BeginPairing(actionCtx) })
 		default:
 			actions.Go(func(actionCtx context.Context) { _ = controller.Refresh(actionCtx) })
 		}
@@ -148,7 +151,7 @@ func RunApplication(version string) error {
 			PushButton{AssignTo: &chooseButton, Text: "选择 Codex 程序", OnClicked: chooseClicked},
 			Label{Text: "已配对设备"},
 			ListBox{AssignTo: &deviceList, Model: []string{}},
-			PushButton{AssignTo: &revokeButton, Text: "撤销所选设备", OnClicked: revokeClicked},
+			PushButton{AssignTo: &revokeButton, Text: "移除所选设备", OnClicked: revokeClicked},
 			CheckBox{AssignTo: &autostartCheck, Text: "登录 Windows 时自动启动", OnCheckedChanged: autostartChanged},
 		},
 	}
@@ -175,12 +178,13 @@ func RunApplication(version string) error {
 			qrView.SetVisible(view.ShowQR)
 			deviceList.SetVisible(view.ShowDevices)
 			revokeButton.SetVisible(view.ShowDevices)
-			if view.ShowQR && len(state.InvitationPNG) > 0 {
+			if view.ShowQR && len(state.InvitationPNG) > 0 && !bytes.Equal(currentQRBytes, state.InvitationPNG) {
 				if image, err := png.Decode(bytes.NewReader(state.InvitationPNG)); err == nil {
 					if bitmap, err := walk.NewBitmapFromImage(image); err == nil {
 						old := currentBitmap
 						currentBitmap = bitmap
 						_ = qrView.SetImage(bitmap)
+						currentQRBytes = append(currentQRBytes[:0], state.InvitationPNG...)
 						if old != nil {
 							old.Dispose()
 						}
@@ -331,6 +335,8 @@ func actionText(action ViewAction) string {
 		return "选择 Codex 程序"
 	case RefreshInvitation:
 		return "刷新二维码"
+	case AddDevice:
+		return "添加连接设备"
 	default:
 		return "重新检测"
 	}

@@ -20,7 +20,8 @@ func TestPresentationMapsDesktopStates(t *testing.T) {
 		{state: DesktopState{Kind: NeedsCodex}, title: "未检测到 Codex", primary: ChooseCodex},
 		{state: DesktopState{Kind: CodexFailed}, title: "Codex 启动失败", primary: RetryDetection},
 		{state: DesktopState{Kind: WaitingForPair}, title: "等待手机扫码", showQR: true, primary: RefreshInvitation},
-		{state: DesktopState{Kind: Connected}, title: "已连接", showQR: true, primary: RefreshInvitation, showDevices: true},
+		{state: DesktopState{Kind: Connected}, title: "已连接", showQR: false, primary: AddDevice, showDevices: true},
+		{state: DesktopState{Kind: PairingForAdditionalDevice}, title: "添加新设备", showQR: true, primary: RefreshInvitation, showDevices: true},
 	}
 	for _, test := range tests {
 		t.Run(test.title, func(t *testing.T) {

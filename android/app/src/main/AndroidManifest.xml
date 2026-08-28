@@ -11,6 +11,7 @@
         android:allowBackup="false"
         android:icon="@drawable/ic_launcher"
         android:label="Codex Remote"
+        android:theme="@style/Theme.CodexRemote"
         android:supportsRtl="true"
         android:usesCleartextTraffic="true">
         <activity

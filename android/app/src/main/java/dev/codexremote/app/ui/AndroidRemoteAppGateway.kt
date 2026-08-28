@@ -66,8 +66,8 @@ class AndroidRemoteAppGateway(
     ): ThreadHistory {
         logs.info("history", "load started thread=${threadId.take(8)} cursor=${cursor != null}")
         return if (cursor == null) {
-            ThreadHistoryParser.fromReadResponse(
-                httpClient.threadRead(connection.baseUrl, connection.credential, threadId),
+            ThreadHistoryParser.fromTurnsResponse(
+                httpClient.threadTurns(connection.baseUrl, connection.credential, threadId, null, limit = 50),
                 threadId,
             )
         } else {

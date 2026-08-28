@@ -27,12 +27,13 @@ var ErrAddressInUse = errors.New("bridge address is already in use")
 type StateKind string
 
 const (
-	NeedsTailscaleInstall    StateKind = "needs_tailscale_install"
-	NeedsTailscaleConnection StateKind = "needs_tailscale_connection"
-	NeedsCodex               StateKind = "needs_codex"
-	CodexFailed              StateKind = "codex_failed"
-	WaitingForPair           StateKind = "waiting_for_pair"
-	Connected                StateKind = "connected"
+	NeedsTailscaleInstall      StateKind = "needs_tailscale_install"
+	NeedsTailscaleConnection   StateKind = "needs_tailscale_connection"
+	NeedsCodex                 StateKind = "needs_codex"
+	CodexFailed                StateKind = "codex_failed"
+	WaitingForPair             StateKind = "waiting_for_pair"
+	PairingForAdditionalDevice StateKind = "pairing_for_additional_device"
+	Connected                  StateKind = "connected"
 )
 
 type Environment struct {
@@ -107,6 +108,8 @@ type Controller struct {
 	generation          uint64
 	consecutiveFailures int
 	autoRestartBlocked  bool
+	pairingRequested    bool
+	pairingBaseline     int
 	closed              bool
 }
 
@@ -170,6 +173,31 @@ func (c *Controller) Refresh(ctx context.Context) error {
 
 func (c *Controller) RefreshInvitation(ctx context.Context) error {
 	c.mu.Lock()
+	c.invitationURL = ""
+	c.state.ExpiresAt = time.Time{}
+	c.mu.Unlock()
+	return c.Refresh(ctx)
+}
+
+func (c *Controller) BeginPairing(ctx context.Context) error {
+	c.mu.Lock()
+	if c.bridge == nil {
+		c.mu.Unlock()
+		return fmt.Errorf("bridge is not running")
+	}
+	devices, err := c.bridge.ListDevices()
+	if err != nil {
+		c.mu.Unlock()
+		return fmt.Errorf("list paired devices")
+	}
+	active := 0
+	for _, device := range devices {
+		if !device.Revoked {
+			active++
+		}
+	}
+	c.pairingRequested = true
+	c.pairingBaseline = active
 	c.invitationURL = ""
 	c.state.ExpiresAt = time.Time{}
 	c.mu.Unlock()
@@ -250,7 +278,14 @@ func (c *Controller) refresh(ctx context.Context, manual bool) error {
 	}
 
 	now := c.options.Clock.Now()
-	if c.invitationURL == "" || !c.state.ExpiresAt.After(now) {
+	hasActiveDevice := false
+	for _, device := range c.state.Devices {
+		if !device.Revoked {
+			hasActiveDevice = true
+			break
+		}
+	}
+	if (c.invitationURL == "" || !c.state.ExpiresAt.After(now)) && (c.pairingRequested || !hasActiveDevice) {
 		baseURL := (&url.URL{Scheme: "http", Host: c.bridge.Address()}).String()
 		invitation, err := c.bridge.IssueInvitation(baseURL, pairingInvitationTTL)
 		if err != nil {
@@ -268,19 +303,39 @@ func (c *Controller) refresh(ctx context.Context, manual bool) error {
 	if err != nil {
 		return fmt.Errorf("list paired devices")
 	}
-	kind := WaitingForPair
+	activeDevices := 0
 	for _, device := range devices {
 		if !device.Revoked {
-			kind = Connected
-			break
+			activeDevices++
 		}
 	}
+	if c.pairingRequested && activeDevices > c.pairingBaseline {
+		c.pairingRequested = false
+	}
+	kind := WaitingForPair
+	if activeDevices > 0 {
+		kind = Connected
+	}
+	if c.pairingRequested {
+		kind = PairingForAdditionalDevice
+	}
+	showInvitation := kind == WaitingForPair || kind == PairingForAdditionalDevice
 	state := c.publishLocked(DesktopState{
-		Kind:          kind,
-		Address:       c.bridge.Address(),
-		InvitationPNG: c.state.InvitationPNG,
-		ExpiresAt:     c.state.ExpiresAt,
-		Devices:       devices,
+		Kind:    kind,
+		Address: c.bridge.Address(),
+		InvitationPNG: func() []byte {
+			if showInvitation {
+				return c.state.InvitationPNG
+			}
+			return nil
+		}(),
+		ExpiresAt: func() time.Time {
+			if showInvitation {
+				return c.state.ExpiresAt
+			}
+			return time.Time{}
+		}(),
+		Devices: devices,
 	})
 	notification = &state
 	return nil

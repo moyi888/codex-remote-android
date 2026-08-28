@@ -88,10 +88,9 @@ func TestControllerBecomesConnectedAndReturnsImmutableSnapshots(t *testing.T) {
 	if first.Kind != Connected || len(first.Devices) != 1 {
 		t.Fatalf("状态 = %+v", first)
 	}
-	first.InvitationPNG[0] ^= 0xff
 	first.Devices[0].Name = "已篡改"
 	second := controller.State()
-	if slices.Equal(first.InvitationPNG, second.InvitationPNG) || second.Devices[0].Name != "手机" {
+	if len(second.InvitationPNG) != 0 || second.Devices[0].Name != "手机" {
 		t.Fatal("State 必须返回深拷贝快照")
 	}
 }
