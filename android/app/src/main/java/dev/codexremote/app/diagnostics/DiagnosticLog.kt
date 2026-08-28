@@ -41,9 +41,9 @@ class DiagnosticLogStore(private val capacity: Int = DEFAULT_CAPACITY) {
     }
 
     fun subscribe(listener: (List<DiagnosticLogEntry>) -> Unit): Closeable {
-        listeners += listener
+        listeners.add(listener)
         listener(snapshot())
-        return Closeable { listeners -= listener }
+        return Closeable { listeners.remove(listener) }
     }
 
     fun export(): String = snapshot().joinToString(separator = "\n") { entry ->
