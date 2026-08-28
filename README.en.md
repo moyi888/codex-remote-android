@@ -10,7 +10,7 @@ Securely connect an Android phone to Codex on a Windows PC over Tailscale. View 
 
 1. Install and sign in to [Tailscale for Windows](https://tailscale.com/download/windows)
 2. Install and sign in to [Tailscale for Android](https://tailscale.com/download/android)
-3. Open the [v0.2.0-alpha.1 release](https://github.com/moyi888/codex-remote-android/releases/tag/v0.2.0-alpha.1), download and launch the Windows App, and install the Android APK
+3. Open the [v1.0.0 release](https://github.com/moyi888/codex-remote-android/releases/tag/v1.0.0), download and launch the Windows App, and install the Android APK
 4. In the Android App, scan the QR code displayed by the Windows App
 
 A Tailnet is the private network formed by devices in the same Tailscale account or organization. Once both devices are connected to the same Tailnet, the Windows App automatically discovers its Tailscale address, starts the local Bridge, and displays a one-time QR code. You do not need to enter an IP address or port, configure a Tailscale ACL, or maintain a project allowlist.
@@ -19,7 +19,7 @@ Tailscale must still be installed and signed in separately on the PC and phone. 
 
 ## Downloads
 
-Download from the [v0.2.0-alpha.1 release](https://github.com/moyi888/codex-remote-android/releases/tag/v0.2.0-alpha.1):
+Download from the [v1.0.0 release](https://github.com/moyi888/codex-remote-android/releases/tag/v1.0.0):
 
 - `codex-remote-windows-*.exe`: Windows App
 - `codex-remote-cli-windows-*.exe`: advanced command-line build with console output
@@ -53,7 +53,7 @@ The Android App includes an in-app “Diagnostic logs” screen. After a failed 
 For normal use, double-click `codex-remote-windows-*.exe`. It is a tray application and does not open a console window. Use `codex-remote-cli-windows-*.exe` for debugging, custom listening addresses, or compatibility with an existing deployment:
 
 ```powershell
-.\codex-remote-cli-windows-v0.2.0-alpha.1.exe serve `
+.\codex-remote-cli-windows-v1.0.0.exe serve `
   --listen 100.88.10.20:8787 `
   --advertise-url http://100.88.10.20:8787 `
   --projects .\projects.json `
@@ -66,7 +66,7 @@ For normal use, double-click `codex-remote-windows-*.exe`. It is a tray applicat
 - `--projects`: legacy explicit project registry; the desktop flow does not need it.
 - `--codex-command`: select a custom Codex launch command.
 
-Run `codex-remote-cli-windows-v0.2.0-alpha.1.exe version` to print the version. Adjust the version in the filename to match the downloaded release. Even in advanced mode, expose the listening address only to your Tailnet.
+Run `codex-remote-cli-windows-v1.0.0.exe version` to print the version. Adjust the version in the filename to match the downloaded release. Even in advanced mode, expose the listening address only to your Tailnet.
 
 ## Verify from source
 
