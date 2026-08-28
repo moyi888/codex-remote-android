@@ -213,6 +213,18 @@ func (s *Server) snapshot(writer http.ResponseWriter, request *http.Request) {
 		writeError(writer, http.StatusBadGateway, "failed to list threads")
 		return
 	}
+	// Keep collection fields JSON arrays even when an adapter has no items.
+	// A nil Go slice would otherwise be encoded as null, which violates the
+	// protocol contract consumed by clients as non-null lists.
+	if projects == nil {
+		projects = []domain.ProjectOption{}
+	}
+	if models == nil {
+		models = []domain.ModelOption{}
+	}
+	if threads == nil {
+		threads = []domain.ThreadSummary{}
+	}
 	writeJSON(writer, http.StatusOK, map[string]any{
 		"protocolVersion": domain.ProtocolVersion,
 		"eventCursor":     eventCursor,

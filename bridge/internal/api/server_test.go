@@ -74,11 +74,12 @@ func TestSnapshotRequiresAuthenticationAndPairingGrantsAccess(t *testing.T) {
 		EventCursor     uint64 `json:"eventCursor"`
 		Projects        []any  `json:"projects"`
 		Models          []any  `json:"models"`
+		Threads         []any  `json:"threads"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.ProtocolVersion != 1 || snapshot.EventCursor != 0 || len(snapshot.Projects) != 1 || len(snapshot.Models) != 1 {
+	if snapshot.ProtocolVersion != 1 || snapshot.EventCursor != 0 || len(snapshot.Projects) != 1 || len(snapshot.Models) != 1 || snapshot.Threads == nil || len(snapshot.Threads) != 0 {
 		t.Fatalf("unexpected snapshot: %+v", snapshot)
 	}
 }
