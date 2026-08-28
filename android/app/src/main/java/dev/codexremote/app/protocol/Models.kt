@@ -4,6 +4,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 @Serializable
 data class PairExchangeRequest(
@@ -106,6 +107,89 @@ data class ThreadSummary(
     val activeTurnId: String? = null,
     val attention: Attention? = null,
 )
+
+data class ConversationEntry(
+    val id: String,
+    val kind: String,
+    val text: String,
+    val status: String? = null,
+)
+
+data class ThreadHistory(
+    val entries: List<ConversationEntry> = emptyList(),
+    val nextCursor: String? = null,
+)
+
+/** Parses app-server history without coupling the client to every future item type. */
+object ThreadHistoryParser {
+    fun fromReadResponse(root: JsonObject, threadId: String): ThreadHistory {
+        val thread = root["thread"]?.jsonObjectOrNull() ?: root
+        val turns = thread["turns"]?.jsonArrayOrNull() ?: root["turns"]?.jsonArrayOrNull() ?: return ThreadHistory()
+        return parseTurns(turns, threadId, root["nextCursor"]?.stringOrNull())
+    }
+
+    fun fromTurnsResponse(root: JsonObject, threadId: String): ThreadHistory {
+        val turns = root["turns"]?.jsonArrayOrNull()
+            ?: root["data"]?.jsonArrayOrNull()
+            ?: root["items"]?.jsonArrayOrNull()
+            ?: return ThreadHistory(nextCursor = root["nextCursor"]?.stringOrNull())
+        return parseTurns(turns, threadId, root["nextCursor"]?.stringOrNull())
+    }
+
+    private fun parseTurns(turns: List<JsonElement>, threadId: String, nextCursor: String?): ThreadHistory {
+        val entries = turns.flatMapIndexed { turnIndex, element ->
+            val turn = element.jsonObjectOrNull() ?: return@flatMapIndexed emptyList()
+            val turnId = turn["id"]?.stringOrNull() ?: "$threadId-turn-$turnIndex"
+            val items = turn["items"]?.jsonArrayOrNull().orEmpty()
+            if (items.isEmpty()) {
+                listOfNotNull(
+                    turn["input"]?.let { entry(turnId, "用户", it) },
+                    turn["status"]?.let { entry("$turnId-status", "状态", it) },
+                )
+            } else {
+                items.mapIndexedNotNull { index, item -> itemEntry(item, "$turnId-item-$index") }
+            }
+        }
+        return ThreadHistory(entries, nextCursor)
+    }
+
+    private fun itemEntry(item: JsonElement, fallbackId: String): ConversationEntry? {
+        val objectValue = item.jsonObjectOrNull() ?: return null
+        val type = objectValue["type"]?.stringOrNull() ?: "item"
+        val label = when {
+            type.contains("user", ignoreCase = true) -> "用户"
+            type.contains("agent", ignoreCase = true) || type.contains("message", ignoreCase = true) -> "Codex"
+            else -> "工具 · $type"
+        }
+        val text = objectValue["text"]?.stringOrNull()
+            ?: objectValue["content"]?.flattenText()
+            ?: objectValue["command"]?.stringOrNull()
+            ?: objectValue["name"]?.stringOrNull()
+            ?: objectValue["status"]?.stringOrNull()
+            ?: return null
+        return ConversationEntry(objectValue["id"]?.stringOrNull() ?: fallbackId, label, text, objectValue["status"]?.stringOrNull())
+    }
+
+    private fun entry(id: String, kind: String, value: JsonElement): ConversationEntry? {
+        val text = value.flattenText() ?: return null
+        return ConversationEntry(id, kind, text)
+    }
+
+    private fun JsonElement.flattenText(): String? = when (this) {
+        is JsonPrimitive -> content.takeIf { it.isNotBlank() }
+        else -> when (val objectValue = jsonObjectOrNull()) {
+            null -> jsonArrayOrNull()?.mapNotNull { it.flattenText() }?.joinToString("\n")?.takeIf { it.isNotBlank() }
+            else -> listOf("text", "value", "content", "message", "input").asSequence()
+                .mapNotNull { objectValue[it]?.flattenText() }
+                .joinToString("\n")
+                .takeIf { it.isNotBlank() }
+        }
+    }
+
+    private fun JsonElement.jsonObjectOrNull(): JsonObject? = this as? JsonObject
+    private fun JsonElement.jsonArrayOrNull() = this as? kotlinx.serialization.json.JsonArray
+    private fun JsonElement.stringOrNull(): String? = (this as? JsonPrimitive)?.content
+}
 
 @Serializable
 data class ProjectOption(

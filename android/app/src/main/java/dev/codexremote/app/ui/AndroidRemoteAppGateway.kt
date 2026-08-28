@@ -10,6 +10,8 @@ import dev.codexremote.app.protocol.CommandEnvelope
 import dev.codexremote.app.protocol.PairingInvitation
 import dev.codexremote.app.protocol.Snapshot
 import dev.codexremote.app.protocol.StoredBridgeConnection
+import dev.codexremote.app.protocol.ThreadHistory
+import dev.codexremote.app.protocol.ThreadHistoryParser
 import dev.codexremote.app.security.CredentialVault
 import dev.codexremote.app.service.CodexRemoteService
 import dev.codexremote.app.diagnostics.DiagnosticLogStore
@@ -54,6 +56,25 @@ class AndroidRemoteAppGateway(
         } catch (error: Exception) {
             logs.error("snapshot", "load failed", error)
             throw error
+        }
+    }
+
+    override fun loadThreadHistory(
+        connection: StoredBridgeConnection,
+        threadId: String,
+        cursor: String?,
+    ): ThreadHistory {
+        logs.info("history", "load started thread=${threadId.take(8)} cursor=${cursor != null}")
+        return if (cursor == null) {
+            ThreadHistoryParser.fromReadResponse(
+                httpClient.threadRead(connection.baseUrl, connection.credential, threadId),
+                threadId,
+            )
+        } else {
+            ThreadHistoryParser.fromTurnsResponse(
+                httpClient.threadTurns(connection.baseUrl, connection.credential, threadId, cursor),
+                threadId,
+            )
         }
     }
 

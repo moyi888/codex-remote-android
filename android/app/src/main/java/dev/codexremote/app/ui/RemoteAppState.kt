@@ -2,6 +2,7 @@ package dev.codexremote.app.ui
 
 import dev.codexremote.app.protocol.ModelOption
 import dev.codexremote.app.protocol.Snapshot
+import dev.codexremote.app.protocol.ThreadHistory
 
 data class NewTaskState(
     val projectId: String? = null,
@@ -12,6 +13,7 @@ data class NewTaskState(
 data class RemoteAppState(
     val snapshot: Snapshot? = null,
     val newTask: NewTaskState = NewTaskState(),
+    val histories: Map<String, ThreadHistory> = emptyMap(),
 ) {
     fun withSnapshot(value: Snapshot): RemoteAppState {
         val projectId = newTask.projectId.takeIf { selected ->
@@ -26,6 +28,14 @@ data class RemoteAppState(
             snapshot = value,
             newTask = NewTaskState(projectId, modelId, reasoningId),
         )
+    }
+
+    fun withHistory(threadId: String, history: ThreadHistory, append: Boolean = false): RemoteAppState {
+        val previous = histories[threadId]
+        val merged = if (append && previous != null) {
+            history.copy(entries = previous.entries + history.entries)
+        } else history
+        return copy(histories = histories + (threadId to merged))
     }
 
     fun selectProject(projectId: String): RemoteAppState {

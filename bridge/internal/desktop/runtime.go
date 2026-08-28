@@ -142,17 +142,19 @@ func (b *httpBridge) forwardNotifications(ctx context.Context, broker *events.Br
 				return
 			}
 			threadID, attention, detected := codex.AttentionFromNotification(notification, now())
-			if !detected {
-				continue
+			if detected {
+				payload, err := json.Marshal(struct {
+					ID        string           `json:"id"`
+					Attention domain.Attention `json:"attention"`
+				}{ID: threadID, Attention: attention})
+				if err == nil {
+					_, _ = broker.Publish("attention.required", payload)
+				}
 			}
-			payload, err := json.Marshal(struct {
-				ID        string           `json:"id"`
-				Attention domain.Attention `json:"attention"`
-			}{ID: threadID, Attention: attention})
-			if err != nil {
-				continue
+			if eventType, ok := codex.RemoteEventType(notification.Method); ok {
+				payload := codex.RemoteEventPayload(notification)
+				_, _ = broker.Publish(eventType, payload)
 			}
-			_, _ = broker.Publish("attention.required", payload)
 		}
 	}
 }

@@ -2,6 +2,7 @@ package dev.codexremote.app.protocol
 
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.fail
@@ -9,6 +10,30 @@ import org.junit.Assert.assertNotNull
 import org.junit.Test
 
 class ModelsTest {
+    @Test
+    fun parsesConversationItemsAndPaginationCursor() {
+        val raw = Json.parseToJsonElement(
+            """{"thread":{"turns":[{"id":"turn-1","items":[{"id":"item-1","type":"userMessage","text":"检查构建"},{"id":"item-2","type":"agentMessage","text":"正在检查"},{"id":"item-3","type":"commandExecution","command":"go test ./..."}]}]},"nextCursor":"cursor-2"}""",
+        ).jsonObject
+
+        val history = ThreadHistoryParser.fromReadResponse(raw, "thread-1")
+
+        assertEquals("cursor-2", history.nextCursor)
+        assertEquals(listOf("用户", "Codex", "工具 · commandExecution"), history.entries.map { it.kind })
+        assertEquals("go test ./...", history.entries.last().text)
+    }
+
+    @Test
+    fun parsesTurnsListResponseWithDataEnvelope() {
+        val raw = Json.parseToJsonElement(
+            """{"data":[{"id":"turn-2","items":[{"type":"agentMessage","content":[{"text":"完成"}]}]}]}""",
+        ).jsonObject
+
+        val history = ThreadHistoryParser.fromTurnsResponse(raw, "thread-1")
+
+        assertEquals(1, history.entries.size)
+        assertEquals("完成", history.entries.single().text)
+    }
     @Test
     fun decodesSnapshotEventCursor() {
         val raw = """

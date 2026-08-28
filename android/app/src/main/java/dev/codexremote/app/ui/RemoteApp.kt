@@ -50,6 +50,8 @@ fun RemoteApp(
     onOpenAppSettings: () -> Unit,
     onOpenTailscale: () -> Unit,
     onRefresh: () -> Unit,
+    onOpenThread: (String) -> Unit,
+    onLoadMoreThread: (String, String) -> Unit,
     onStartTask: (String, String, String?, String?) -> Unit,
     onSendTurn: (String, String) -> Unit,
     logs: DiagnosticLogStore,
@@ -76,6 +78,8 @@ fun RemoteApp(
             busy = busy,
             deliveryMessage = deliveryMessage,
             onRefresh = onRefresh,
+            onOpenThread = onOpenThread,
+            onLoadMoreThread = onLoadMoreThread,
             onStartTask = onStartTask,
             onSendTurn = onSendTurn,
             onOpenLogs = { showLogs = true },
@@ -94,16 +98,16 @@ private fun HomeScreen(
     busy: Boolean,
     deliveryMessage: String?,
     onRefresh: () -> Unit,
+    onOpenThread: (String) -> Unit,
+    onLoadMoreThread: (String, String) -> Unit,
     onStartTask: (String, String, String?, String?) -> Unit,
     onSendTurn: (String, String) -> Unit,
     onOpenLogs: () -> Unit,
     onSteerTurn: (String, String, String) -> Unit,
     onInterruptTurn: (String, String) -> Unit,
 ) {
-    var page by remember(state.snapshot?.eventCursor) { mutableStateOf(HomePage.THREADS) }
-    var selectedThread by remember(state.snapshot?.eventCursor) {
-        mutableStateOf<ThreadSummary?>(null)
-    }
+    var page by remember { mutableStateOf(HomePage.THREADS) }
+    var selectedThreadId by remember { mutableStateOf<String?>(null) }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -147,14 +151,16 @@ private fun HomeScreen(
                 HomePage.THREADS -> ThreadList(
                     threads = state.snapshot?.threads.orEmpty(),
                     onSelect = {
-                        selectedThread = it
+                        selectedThreadId = it.id
                         page = HomePage.THREAD_DETAIL
+                        onOpenThread(it.id)
                     },
                 )
                 HomePage.NEW_TASK -> NewTaskScreen(state, busy, onStartTask)
-                HomePage.THREAD_DETAIL -> selectedThread?.let { thread ->
+                HomePage.THREAD_DETAIL -> state.snapshot?.threads?.firstOrNull { it.id == selectedThreadId }?.let { thread ->
                     ThreadDetailScreen(
                         thread = thread,
+                        history = state.histories[thread.id],
                         canSend = state.snapshot?.capabilities?.sendTurn == true,
                         canSteer = state.snapshot?.capabilities?.steer == true,
                         canInterrupt = state.snapshot?.capabilities?.stopTurn == true,
@@ -162,6 +168,7 @@ private fun HomeScreen(
                         onSend = onSendTurn,
                         onSteer = onSteerTurn,
                         onInterrupt = onInterruptTurn,
+                        onLoadMore = onLoadMoreThread,
                     )
                 }
             }
@@ -204,6 +211,7 @@ internal fun threadListItemKey(index: Int, thread: ThreadSummary): String =
 @Composable
 private fun ThreadDetailScreen(
     thread: ThreadSummary,
+    history: dev.codexremote.app.protocol.ThreadHistory?,
     canSend: Boolean,
     canSteer: Boolean,
     canInterrupt: Boolean,
@@ -211,47 +219,78 @@ private fun ThreadDetailScreen(
     onSend: (String, String) -> Unit,
     onSteer: (String, String, String) -> Unit,
     onInterrupt: (String, String) -> Unit,
+    onLoadMore: (String, String) -> Unit,
 ) {
     var prompt by remember(thread.id) { mutableStateOf("") }
-    Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(top = 16.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         val activeTurn = thread.activeTurnId
         val canSteerCurrent = activeTurn != null && thread.state == ThreadState.RUNNING && canSteer
-        Text(thread.title, style = MaterialTheme.typography.headlineSmall)
-        Text("项目：${thread.projectName}")
-        Text("状态：${thread.state.label()}")
-        Text("更新时间：${thread.updatedAt}")
-        thread.attention?.let(ThreadAttentionMessage::from)?.let { AttentionNotice(it) }
-        HorizontalDivider()
-        Text("当前 Bridge 协议暂不提供历史消息；这里显示任务摘要，并可继续下发新一轮。")
-        OutlinedTextField(
-            value = prompt,
-            onValueChange = { prompt = it },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("继续对话") },
-            minLines = 4,
-            enabled = !busy && (canSend || canSteerCurrent),
-        )
-        Button(
-            onClick = { onSend(thread.id, prompt) },
-            enabled = !busy && canSend && prompt.isNotBlank(),
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text(if (busy) "发送中…" else "发送新一轮") }
-        if (canSteerCurrent) {
-            Button(
-                onClick = { onSteer(thread.id, activeTurn!!, prompt) },
-                enabled = !busy && prompt.isNotBlank(),
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text(if (busy) "发送中…" else "追加到当前执行") }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(thread.title, style = MaterialTheme.typography.headlineSmall)
+                Text("项目：${thread.projectName}")
+                Text("状态：${thread.state.label()}")
+                Text("更新时间：${thread.updatedAt}")
+                thread.attention?.let(ThreadAttentionMessage::from)?.let { AttentionNotice(it) }
+                HorizontalDivider()
+            }
         }
-        if (activeTurn != null && thread.state == ThreadState.RUNNING && canInterrupt) {
-            Button(
-                onClick = { onInterrupt(thread.id, activeTurn) },
-                enabled = !busy,
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text(if (busy) "处理中…" else "中止当前执行") }
+        when {
+            history == null -> item { Text("正在读取历史对话…", color = MaterialTheme.colorScheme.secondary) }
+            history.entries.isEmpty() -> item { Text("暂无可显示的历史消息。", color = MaterialTheme.colorScheme.secondary) }
+            else -> {
+                itemsIndexed(history.entries, key = { _, entry -> entry.id }) { _, entry ->
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(12.dp)) {
+                            Text(entry.kind, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                            Text(entry.text, style = MaterialTheme.typography.bodyLarge)
+                            entry.status?.let { Text(it, style = MaterialTheme.typography.labelSmall) }
+                        }
+                    }
+                }
+                history.nextCursor?.let { cursor ->
+                    item {
+                        TextButton(onClick = { onLoadMore(thread.id, cursor) }, enabled = !busy) {
+                            Text(if (busy) "加载中…" else "加载更早记录")
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = prompt,
+                    onValueChange = { prompt = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("继续对话") },
+                    minLines = 4,
+                    enabled = !busy && (canSend || canSteerCurrent),
+                )
+                Button(
+                    onClick = { onSend(thread.id, prompt) },
+                    enabled = !busy && canSend && prompt.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text(if (busy) "发送中…" else "发送新一轮") }
+                if (canSteerCurrent) {
+                    Button(
+                        onClick = { onSteer(thread.id, activeTurn!!, prompt) },
+                        enabled = !busy && prompt.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(if (busy) "发送中…" else "追加到当前执行") }
+                }
+                if (activeTurn != null && thread.state == ThreadState.RUNNING && canInterrupt) {
+                    Button(
+                        onClick = { onInterrupt(thread.id, activeTurn) },
+                        enabled = !busy,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(if (busy) "处理中…" else "中止当前执行") }
+                }
+            }
         }
     }
 }

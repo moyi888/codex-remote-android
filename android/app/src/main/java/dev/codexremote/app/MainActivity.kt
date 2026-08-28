@@ -25,6 +25,7 @@ import dev.codexremote.app.ui.NotificationPermissionPolicy
 import dev.codexremote.app.ui.PendingPairingInvitation
 import dev.codexremote.app.ui.RemoteApp
 import dev.codexremote.app.ui.RemoteAppController
+import dev.codexremote.app.ui.RemoteAppState
 import dev.codexremote.app.diagnostics.DiagnosticLogs
 import java.time.Instant
 import java.util.UUID
@@ -36,8 +37,15 @@ class MainActivity : ComponentActivity() {
         Thread(runnable, "remote-app-worker").apply { isDaemon = true }
     }
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val pollRunnable = object : Runnable {
+        override fun run() {
+            if (loadResult is LoadResult.Ready && !busy) resumeConnection()
+            mainHandler.postDelayed(this, POLL_INTERVAL_MS)
+        }
+    }
     private lateinit var controller: RemoteAppController
     private var loadResult by mutableStateOf<LoadResult>(LoadResult.Unpaired)
+    private var appState by mutableStateOf(RemoteAppState())
     private var busy by mutableStateOf(false)
     private var deliveryMessage by mutableStateOf<String?>(null)
     private var cameraPermission by mutableStateOf(CameraPermission.REQUESTABLE)
@@ -63,7 +71,10 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 RemoteApp(
-                    loadResult = loadResult,
+                    loadResult = when (val result = loadResult) {
+                        is LoadResult.Ready -> LoadResult.Ready(appState)
+                        else -> result
+                    },
                     busy = busy,
                     deliveryMessage = deliveryMessage,
                     onPair = ::pair,
@@ -73,6 +84,8 @@ class MainActivity : ComponentActivity() {
                     onOpenAppSettings = ::openAppSettings,
                     onOpenTailscale = ::openTailscale,
                     onRefresh = ::resumeConnection,
+                    onOpenThread = ::loadThread,
+                    onLoadMoreThread = ::loadMoreThread,
                     onStartTask = { projectId, prompt, modelId, reasoningId ->
                         executeCommand {
                             controller.startTask(projectId, prompt, modelId, reasoningId)
@@ -92,6 +105,7 @@ class MainActivity : ComponentActivity() {
             }
         }
         pairingLink(intent)?.let(::pair) ?: resumeConnection()
+        mainHandler.postDelayed(pollRunnable, POLL_INTERVAL_MS)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -106,6 +120,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        mainHandler.removeCallbacks(pollRunnable)
         worker.shutdownNow()
         super.onDestroy()
     }
@@ -129,8 +144,40 @@ class MainActivity : ComponentActivity() {
             logs.info("connection", "background load finished result=${result::class.simpleName}")
             postToActiveActivity {
                 loadResult = result
+                if (result is LoadResult.Ready) {
+                    appState = result.state.copy(histories = appState.histories)
+                }
                 busy = false
                 pendingPairingInvitation.takeAfterLoad()?.let(::pair)
+            }
+        }
+    }
+
+    private fun loadThread(threadId: String) {
+        executeHistory(threadId, null, append = false)
+    }
+
+    private fun loadMoreThread(threadId: String, cursor: String) {
+        executeHistory(threadId, cursor, append = true)
+    }
+
+    private fun executeHistory(threadId: String, cursor: String?, append: Boolean) {
+        if (busy) return
+        busy = true
+        deliveryMessage = null
+        worker.execute {
+            try {
+                val history = controller.loadThreadHistory(threadId, cursor)
+                postToActiveActivity {
+                    appState = appState.withHistory(threadId, history, append)
+                    busy = false
+                }
+            } catch (error: Exception) {
+                logs.error("history", "load failed thread=${threadId.take(8)}", error)
+                postToActiveActivity {
+                    deliveryMessage = "无法读取任务历史：${error.message ?: "请求失败"}"
+                    busy = false
+                }
             }
         }
     }
@@ -238,6 +285,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private companion object {
+        const val POLL_INTERVAL_MS = 10_000L
         const val DEVICE_PREFERENCES = "device_identity"
         const val DEVICE_ID_KEY = "device_id"
         const val CAMERA_PREFERENCES = "camera_permission"
@@ -245,4 +293,5 @@ class MainActivity : ComponentActivity() {
         const val TAILSCALE_ANDROID_URL = "https://tailscale.com/download/android"
         const val TAILSCALE_PACKAGE = "com.tailscale.ipn"
     }
+
 }

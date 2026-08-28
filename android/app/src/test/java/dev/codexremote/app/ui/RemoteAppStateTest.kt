@@ -5,11 +5,28 @@ import dev.codexremote.app.protocol.ModelOption
 import dev.codexremote.app.protocol.ProjectOption
 import dev.codexremote.app.protocol.ReasoningOption
 import dev.codexremote.app.protocol.Snapshot
+import dev.codexremote.app.protocol.ConversationEntry
+import dev.codexremote.app.protocol.ThreadHistory
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
 class RemoteAppStateTest {
+    @Test
+    fun appendsPagedHistoryWithoutDroppingExistingEntries() {
+        val initial = RemoteAppState().withHistory(
+            "thread-1",
+            ThreadHistory(listOf(ConversationEntry("1", "用户", "开始")), "next"),
+        )
+        val updated = initial.withHistory(
+            "thread-1",
+            ThreadHistory(listOf(ConversationEntry("2", "Codex", "完成")), null),
+            append = true,
+        )
+
+        assertEquals(listOf("开始", "完成"), updated.histories["thread-1"]?.entries?.map { it.text })
+        assertNull(updated.histories["thread-1"]?.nextCursor)
+    }
     @Test
     fun snapshotSelectsFirstAvailableProjectAndModel() {
         val state = RemoteAppState().withSnapshot(snapshot())

@@ -6,6 +6,7 @@ import dev.codexremote.app.protocol.DeviceCredential
 import dev.codexremote.app.protocol.PairingInvitation
 import dev.codexremote.app.protocol.Snapshot
 import dev.codexremote.app.protocol.StoredBridgeConnection
+import dev.codexremote.app.protocol.ThreadHistory
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -162,6 +163,12 @@ class RemoteAppControllerTest {
             snapshotLoads += 1
             return snapshot()
         }
+
+        override fun loadThreadHistory(
+            connection: StoredBridgeConnection,
+            threadId: String,
+            cursor: String?,
+        ): ThreadHistory = ThreadHistory()
 
         override fun send(
             connection: StoredBridgeConnection,

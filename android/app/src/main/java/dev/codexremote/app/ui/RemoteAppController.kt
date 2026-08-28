@@ -4,6 +4,7 @@ import dev.codexremote.app.protocol.CommandEnvelope
 import dev.codexremote.app.protocol.PairingInvitation
 import dev.codexremote.app.protocol.Snapshot
 import dev.codexremote.app.protocol.StoredBridgeConnection
+import dev.codexremote.app.protocol.ThreadHistory
 import dev.codexremote.app.diagnostics.DiagnosticLogStore
 import dev.codexremote.app.diagnostics.DiagnosticLogs
 
@@ -40,6 +41,8 @@ interface RemoteAppGateway {
     fun saveConnection(connection: StoredBridgeConnection)
 
     fun loadSnapshot(connection: StoredBridgeConnection): Snapshot
+
+    fun loadThreadHistory(connection: StoredBridgeConnection, threadId: String, cursor: String? = null): ThreadHistory
 
     fun send(
         connection: StoredBridgeConnection,
@@ -93,6 +96,11 @@ class RemoteAppController(
 
     fun interruptTurn(threadId: String, turnId: String): CommandDelivery = send { factory ->
         factory.interruptTurn(threadId, turnId)
+    }
+
+    fun loadThreadHistory(threadId: String, cursor: String? = null): ThreadHistory {
+        val current = connection ?: throw IllegalStateException("not paired")
+        return gateway.loadThreadHistory(current, threadId, cursor)
     }
 
     private fun load(value: StoredBridgeConnection): LoadResult {
