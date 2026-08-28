@@ -68,7 +68,7 @@ class PairingQrAnalyzerTest {
 
     @Test
     fun analysisSessionClosesEachFrameExactlyOnce() {
-        val session = PairingAnalysisSession {}
+        val session = PairingAnalysisSession(onInvitation = {})
         var closes = 0
 
         session.analyze(
