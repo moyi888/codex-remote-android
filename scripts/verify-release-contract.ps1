@@ -39,7 +39,7 @@ $requiredQuickStart = @(
     (ConvertFrom-Utf8Base64 'IyMg5Zub5q2l5byA5aeL5L2/55So'),
     'https://tailscale.com/download/windows',
     'https://tailscale.com/download/android',
-    'https://github.com/moyi888/codex-remote-android/releases/tag/v0.2.0-alpha.2',
+    'https://github.com/moyi888/codex-remote-android/releases/tag/v0.2.0-alpha.3',
     (ConvertFrom-Utf8Base64 'NC4g55SoIEFuZHJvaWQgQXBwIOaJq+aPjyBXaW5kb3dzIEFwcCDmmL7npLrnmoTkuoznu7TnoIE=')
 )
 foreach ($text in $requiredQuickStart) {
@@ -66,7 +66,7 @@ foreach ($text in @(
     '[English](README.en.md)',
     'https://tailscale.com/download/windows',
     'https://tailscale.com/download/android',
-    'https://github.com/moyi888/codex-remote-android/releases/tag/v0.2.0-alpha.2'
+    'https://github.com/moyi888/codex-remote-android/releases/tag/v0.2.0-alpha.3'
 )) {
     if (-not $readme.Contains($text)) {
         throw "Chinese README is missing bilingual/download contract: $text"
@@ -78,7 +78,7 @@ foreach ($text in @(
     '## Get started in four steps',
     'https://tailscale.com/download/windows',
     'https://tailscale.com/download/android',
-    'https://github.com/moyi888/codex-remote-android/releases/tag/v0.2.0-alpha.2'
+    'https://github.com/moyi888/codex-remote-android/releases/tag/v0.2.0-alpha.3'
 )) {
     if (-not $englishReadme.Contains($text)) {
         throw "English README is missing bilingual/download contract: $text"
@@ -112,8 +112,8 @@ foreach ($text in @(
 }
 
 foreach ($text in @(
-    'versionCode = 3',
-    'versionName = "0.2.0-alpha.2"'
+    'versionCode = 4',
+    'versionName = "0.2.0-alpha.3"'
 )) {
     if (-not $androidBuild.Contains($text)) {
         throw "Android release metadata is missing: $text"
