@@ -225,7 +225,7 @@ class BridgeEventStreamTest {
 
     @Test
     fun defaultWebSocketClientSendsPeriodicPings() {
-        assertEquals(20_000L, bridgeEventStreamClient().pingIntervalMillis)
+        assertEquals(20_000, bridgeEventStreamClient().pingIntervalMillis)
     }
 
     @Test

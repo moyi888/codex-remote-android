@@ -38,7 +38,7 @@ class BridgeHttpClientTest {
 
     @Test
     fun defaultHttpClientHasBoundedCallTimeout() {
-        assertEquals(30_000L, bridgeHttpOkHttpClient().callTimeoutMillis)
+        assertEquals(30_000, bridgeHttpOkHttpClient().callTimeoutMillis)
     }
 
     @Test
