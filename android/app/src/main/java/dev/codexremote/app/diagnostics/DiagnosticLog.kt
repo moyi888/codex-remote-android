@@ -47,7 +47,7 @@ class DiagnosticLogStore(private val capacity: Int = DEFAULT_CAPACITY) {
     }
 
     fun export(): String = snapshot().joinToString(separator = "\n") { entry ->
-        val time = DATE_FORMAT.format(Date(entry.timestamp))
+        val time = synchronized(DATE_FORMAT) { DATE_FORMAT.format(Date(entry.timestamp)) }
         "$time ${entry.level.name.padEnd(5)} [${entry.stage}] ${entry.message}"
     }
 
@@ -80,9 +80,9 @@ class DiagnosticLogStore(private val capacity: Int = DEFAULT_CAPACITY) {
         val DATE_FORMAT = SimpleDateFormat("HH:mm:ss.SSS", Locale.ROOT)
 
         fun redact(value: String): String = value
+            .replace(Regex("(?i)(Device\\s+[^:\\s]+:)[^\\s]+"), "\$1[REDACTED]")
             .replace(Regex("(?i)(token|credential|authorization)(\\s*[:=]\\s*|%3D)[^&\\s,]+"), "\$1=[REDACTED]")
             .replace(Regex("(?i)(codex-remote://pair[^\\s]*)(token%3D|token=)[^&\\s]+"), "\$1\$2[REDACTED]")
-            .replace(Regex("(?i)(Device\\s+[^:\\s]+:)[^\\s]+"), "\$1[REDACTED]")
     }
 }
 
