@@ -12,6 +12,15 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import java.util.concurrent.TimeUnit
+
+internal fun bridgeEventStreamClient(okHttpClient: OkHttpClient = OkHttpClient()): OkHttpClient =
+    okHttpClient.newBuilder()
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .retryOnConnectionFailure(false)
+        .pingInterval(20, TimeUnit.SECONDS)
+        .build()
 
 internal enum class EventStreamState {
     CONNECTING,
@@ -63,11 +72,7 @@ internal class BridgeEventStream internal constructor(
         cursorStore = cursorStore,
         snapshotLoader = snapshotLoader,
         listener = listener,
-        webSocketFactory = okHttpClient.newBuilder()
-            .followRedirects(false)
-            .followSslRedirects(false)
-            .retryOnConnectionFailure(false)
-            .build(),
+        webSocketFactory = bridgeEventStreamClient(okHttpClient),
         json = json,
     )
 

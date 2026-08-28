@@ -34,6 +34,18 @@ class ModelsTest {
         assertEquals(1, history.entries.size)
         assertEquals("完成", history.entries.single().text)
     }
+
+    @Test
+    fun parsesTurnsNestedInsideDataEnvelopeAndUsesNestedCursor() {
+        val raw = Json.parseToJsonElement(
+            """{"data":{"turns":[{"id":"turn-3","items":[{"type":"agentMessage","text":"历史消息"}]}],"nextCursor":"cursor-3"}}""",
+        ).jsonObject
+
+        val history = ThreadHistoryParser.fromTurnsResponse(raw, "thread-1")
+
+        assertEquals("cursor-3", history.nextCursor)
+        assertEquals(listOf("历史消息"), history.entries.map { it.text })
+    }
     @Test
     fun decodesSnapshotEventCursor() {
         val raw = """

@@ -25,6 +25,9 @@ class AndroidRemoteAppGateway(
     private val queue: PendingCommandQueue = PendingCommandQueue.create(context),
     private val clock: () -> String,
 ) : RemoteAppGateway {
+    private companion object {
+        const val HISTORY_PAGE_SIZE = 50
+    }
     private val applicationContext = context.applicationContext
 
     override fun loadConnection(): StoredBridgeConnection? = vault.load()
@@ -67,12 +70,24 @@ class AndroidRemoteAppGateway(
         logs.info("history", "load started thread=${threadId.take(8)} cursor=${cursor != null}")
         return if (cursor == null) {
             ThreadHistoryParser.fromTurnsResponse(
-                httpClient.threadTurns(connection.baseUrl, connection.credential, threadId, null, limit = 50),
+                httpClient.threadTurns(
+                    connection.baseUrl,
+                    connection.credential,
+                    threadId,
+                    null,
+                    limit = HISTORY_PAGE_SIZE,
+                ),
                 threadId,
             )
         } else {
             ThreadHistoryParser.fromTurnsResponse(
-                httpClient.threadTurns(connection.baseUrl, connection.credential, threadId, cursor),
+                httpClient.threadTurns(
+                    connection.baseUrl,
+                    connection.credential,
+                    threadId,
+                    cursor,
+                    limit = HISTORY_PAGE_SIZE,
+                ),
                 threadId,
             )
         }

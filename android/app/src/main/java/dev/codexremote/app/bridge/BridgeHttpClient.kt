@@ -20,6 +20,15 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import java.util.concurrent.TimeUnit
+
+internal fun bridgeHttpOkHttpClient(okHttpClient: OkHttpClient = OkHttpClient()): OkHttpClient =
+    okHttpClient.newBuilder()
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .retryOnConnectionFailure(false)
+        .callTimeout(30, TimeUnit.SECONDS)
+        .build()
 
 class BridgeApiException(
     val statusCode: Int,
@@ -34,10 +43,7 @@ class BridgeHttpClient(
     private val json: Json = Json { ignoreUnknownKeys = true },
     private val logs: DiagnosticLogStore = DiagnosticLogs.instance,
 ) {
-    private val httpClient = okHttpClient.newBuilder()
-        .followRedirects(false)
-        .followSslRedirects(false)
-        .retryOnConnectionFailure(false)
+    private val httpClient = bridgeHttpOkHttpClient(okHttpClient).newBuilder()
         .addNetworkInterceptor(PairingNoRetryInterceptor)
         .build()
 

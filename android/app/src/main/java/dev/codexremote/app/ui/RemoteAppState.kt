@@ -3,6 +3,7 @@ package dev.codexremote.app.ui
 import dev.codexremote.app.protocol.ModelOption
 import dev.codexremote.app.protocol.Snapshot
 import dev.codexremote.app.protocol.ThreadHistory
+import java.time.Instant
 
 data class NewTaskState(
     val projectId: String? = null,
@@ -16,16 +17,23 @@ data class RemoteAppState(
     val histories: Map<String, ThreadHistory> = emptyMap(),
 ) {
     fun withSnapshot(value: Snapshot): RemoteAppState {
+        val orderedSnapshot = value.copy(
+            threads = value.threads.sortedWith(
+                compareByDescending<dev.codexremote.app.protocol.ThreadSummary> {
+                    runCatching { Instant.parse(it.updatedAt) }.getOrNull() ?: Instant.MIN
+                }.thenBy { it.id },
+            ),
+        )
         val projectId = newTask.projectId.takeIf { selected ->
-            value.projects.any { it.id == selected }
-        } ?: value.projects.firstOrNull()?.id
+            orderedSnapshot.projects.any { it.id == selected }
+        } ?: orderedSnapshot.projects.firstOrNull()?.id
         val modelId = newTask.modelId.takeIf { selected ->
-            value.models.any { it.id == selected }
-        } ?: value.models.firstOrNull()?.id
-        val model = value.models.firstOrNull { it.id == modelId }
+            orderedSnapshot.models.any { it.id == selected }
+        } ?: orderedSnapshot.models.firstOrNull()?.id
+        val model = orderedSnapshot.models.firstOrNull { it.id == modelId }
         val reasoningId = compatibleReasoning(model, newTask.reasoningId)
         return copy(
-            snapshot = value,
+            snapshot = orderedSnapshot,
             newTask = NewTaskState(projectId, modelId, reasoningId),
         )
     }
@@ -33,7 +41,9 @@ data class RemoteAppState(
     fun withHistory(threadId: String, history: ThreadHistory, append: Boolean = false): RemoteAppState {
         val previous = histories[threadId]
         val merged = if (append && previous != null) {
-            history.copy(entries = previous.entries + history.entries)
+            val entriesById = LinkedHashMap<String, dev.codexremote.app.protocol.ConversationEntry>()
+            (previous.entries + history.entries).forEach { entry -> entriesById[entry.id] = entry }
+            history.copy(entries = entriesById.values.toList())
         } else history
         return copy(histories = histories + (threadId to merged))
     }

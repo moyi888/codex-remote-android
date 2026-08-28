@@ -37,6 +37,11 @@ class BridgeHttpClientTest {
     }
 
     @Test
+    fun defaultHttpClientHasBoundedCallTimeout() {
+        assertEquals(30_000L, bridgeHttpOkHttpClient().callTimeoutMillis)
+    }
+
+    @Test
     fun exchangePostsPairingRequestAndDecodesCredential() {
         server.enqueue(
             jsonResponse(
@@ -152,6 +157,16 @@ class BridgeHttpClientTest {
         assertEquals("/v1/commands", request.path)
         assertEquals("Device phone-1:credential-1", request.getHeader("Authorization"))
         assertEquals(Json.encodeToJsonElement(CommandEnvelope.serializer(), command), Json.parseToJsonElement(request.body.readUtf8()))
+    }
+
+    @Test
+    fun threadTurnsKeepsPageSizeWhenLoadingWithCursor() {
+        server.enqueue(jsonResponse("""{"turns":[],"nextCursor":null}"""))
+        val credential = DeviceCredential(1, "phone-1", "credential-1")
+
+        client.threadTurns(baseUrl(), credential, "thread-1", cursor = "cursor-2", limit = 50)
+
+        assertEquals("/v1/threads/thread-1/turns?limit=50&cursor=cursor-2", server.takeRequest().path)
     }
 
     @Test

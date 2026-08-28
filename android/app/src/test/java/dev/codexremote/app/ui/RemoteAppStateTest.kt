@@ -7,6 +7,9 @@ import dev.codexremote.app.protocol.ReasoningOption
 import dev.codexremote.app.protocol.Snapshot
 import dev.codexremote.app.protocol.ConversationEntry
 import dev.codexremote.app.protocol.ThreadHistory
+import dev.codexremote.app.protocol.ThreadSource
+import dev.codexremote.app.protocol.ThreadState
+import dev.codexremote.app.protocol.ThreadSummary
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -26,6 +29,42 @@ class RemoteAppStateTest {
 
         assertEquals(listOf("开始", "完成"), updated.histories["thread-1"]?.entries?.map { it.text })
         assertNull(updated.histories["thread-1"]?.nextCursor)
+    }
+
+    @Test
+    fun appendingPagedHistoryRemovesDuplicateEntryIds() {
+        val initial = RemoteAppState().withHistory(
+            "thread-1",
+            ThreadHistory(listOf(ConversationEntry("same", "Codex", "旧内容")), "next"),
+        )
+
+        val updated = initial.withHistory(
+            "thread-1",
+            ThreadHistory(
+                listOf(
+                    ConversationEntry("same", "Codex", "更新内容"),
+                    ConversationEntry("new", "用户", "新消息"),
+                ),
+                null,
+            ),
+            append = true,
+        )
+
+        assertEquals(listOf("更新内容", "新消息"), updated.histories["thread-1"]?.entries?.map { it.text })
+    }
+
+    @Test
+    fun snapshotOrdersThreadsByLatestUpdatedAt() {
+        val state = RemoteAppState().withSnapshot(
+            snapshot().copy(
+                threads = listOf(
+                    thread("old", "2026-08-29T09:00:00Z"),
+                    thread("new", "2026-08-29T10:00:00Z"),
+                ),
+            ),
+        )
+
+        assertEquals(listOf("new", "old"), state.snapshot?.threads?.map { it.id })
     }
     @Test
     fun snapshotSelectsFirstAvailableProjectAndModel() {
@@ -103,5 +142,15 @@ class RemoteAppStateTest {
         projects = projects,
         models = models,
         threads = emptyList(),
+    )
+
+    private fun thread(id: String, updatedAt: String) = ThreadSummary(
+        id = id,
+        title = id,
+        projectId = "project-1",
+        projectName = "项目一",
+        source = ThreadSource.DESKTOP,
+        state = ThreadState.IDLE,
+        updatedAt = updatedAt,
     )
 }

@@ -141,3 +141,39 @@ func TestAppServerAdapterMapsOfficialThreadRuntimeStatuses(t *testing.T) {
 		})
 	}
 }
+
+func TestAppServerAdapterListsThreadsNewestFirst(t *testing.T) {
+	oldName := "旧会话"
+	newName := "新会话"
+	catalog := &recordingCatalog{
+		threads: []ThreadRecord{
+			{ID: "old", Name: &oldName, CWD: `D:\\code`, UpdatedAt: 100},
+			{ID: "new", Name: &newName, CWD: `D:\\code`, UpdatedAt: 200},
+		},
+	}
+	adapter := &AppServerAdapter{rpc: &recordingRPC{}, catalog: catalog, activeTurns: map[string]string{}}
+
+	threads, err := adapter.ListThreads(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(threads) != 2 || threads[0].ID != "new" || !threads[0].UpdatedAt.After(threads[1].UpdatedAt) {
+		t.Fatalf("threads are not sorted newest first: %+v", threads)
+	}
+}
+
+type recordingCatalog struct {
+	threads []ThreadRecord
+}
+
+func (c *recordingCatalog) Threads(context.Context) ([]ThreadRecord, error) {
+	return append([]ThreadRecord(nil), c.threads...), nil
+}
+
+func (c *recordingCatalog) List(context.Context) ([]Project, error) { return nil, nil }
+
+func (c *recordingCatalog) Resolve(context.Context, string) (Project, bool, error) {
+	return Project{}, false, nil
+}
+
+func (c *recordingCatalog) ProjectForPath(string) (Project, bool) { return Project{}, false }

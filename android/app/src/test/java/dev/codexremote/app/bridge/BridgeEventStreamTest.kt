@@ -224,6 +224,11 @@ class BridgeEventStreamTest {
     }
 
     @Test
+    fun defaultWebSocketClientSendsPeriodicPings() {
+        assertEquals(20_000L, bridgeEventStreamClient().pingIntervalMillis)
+    }
+
+    @Test
     fun listenerCanCloseStreamWithoutDeadlockOrCursorAdvance() {
         val factory = ControlledWebSocketFactory()
         val cursorStore = InMemoryCursorStore()

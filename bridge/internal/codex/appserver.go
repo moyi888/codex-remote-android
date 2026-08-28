@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -87,6 +88,12 @@ func (a *AppServerAdapter) ListThreads(ctx context.Context) ([]domain.ThreadSumm
 	if err != nil {
 		return nil, err
 	}
+	sort.SliceStable(records, func(i, j int) bool {
+		if records[i].UpdatedAt != records[j].UpdatedAt {
+			return records[i].UpdatedAt > records[j].UpdatedAt
+		}
+		return records[i].ID < records[j].ID
+	})
 	threads := make([]domain.ThreadSummary, 0, len(records))
 	for _, item := range records {
 		title := item.Preview

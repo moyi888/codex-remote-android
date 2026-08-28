@@ -129,17 +129,24 @@ object ThreadHistoryParser {
     }
 
     fun fromTurnsResponse(root: JsonObject, threadId: String): ThreadHistory {
-        val turns = root["turns"]?.jsonArrayOrNull()
-            ?: root["data"]?.jsonArrayOrNull()
-            ?: root["items"]?.jsonArrayOrNull()
-            ?: return ThreadHistory(nextCursor = root["nextCursor"]?.stringOrNull())
-        return parseTurns(turns, threadId, root["nextCursor"]?.stringOrNull())
+        val container = root["turns"] ?: root["data"] ?: root["items"]
+        val turns = container?.jsonArrayOrNull()
+            ?: container?.jsonObjectOrNull()?.let { nested ->
+                nested["turns"]?.jsonArrayOrNull()
+                    ?: nested["data"]?.jsonArrayOrNull()
+                    ?: nested["items"]?.jsonArrayOrNull()
+            }
+        val nextCursor = root["nextCursor"]?.stringOrNull()
+            ?: container?.jsonObjectOrNull()?.get("nextCursor")?.stringOrNull()
+        return turns?.let { parseTurns(it, threadId, nextCursor) }
+            ?: ThreadHistory(nextCursor = nextCursor)
     }
 
     private fun parseTurns(turns: List<JsonElement>, threadId: String, nextCursor: String?): ThreadHistory {
         val entries = turns.flatMapIndexed { turnIndex, element ->
             val turn = element.jsonObjectOrNull() ?: return@flatMapIndexed emptyList()
-            val turnId = turn["id"]?.stringOrNull() ?: "$threadId-turn-$turnIndex"
+            val pageKey = nextCursor?.takeIf { it.isNotBlank() } ?: "initial"
+            val turnId = turn["id"]?.stringOrNull() ?: "$threadId-turn-$pageKey-$turnIndex"
             val items = turn["items"]?.jsonArrayOrNull().orEmpty()
             if (items.isEmpty()) {
                 listOfNotNull(
