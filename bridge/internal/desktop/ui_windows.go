@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/lxn/walk"
@@ -19,11 +20,22 @@ import (
 )
 
 const tailscaleDownloadURL = "https://tailscale.com/download/windows"
+const createNoWindow uint32 = 0x08000000
 
 type execCommandRunner struct{}
 
 func (execCommandRunner) Run(ctx context.Context, command string, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, command, args...).Output()
+	return runHiddenCommand(ctx, command, args...).Output()
+}
+
+func configureHiddenCommand(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
+}
+
+func runHiddenCommand(ctx context.Context, command string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, command, args...)
+	configureHiddenCommand(cmd)
+	return cmd
 }
 
 type wallClock struct{}

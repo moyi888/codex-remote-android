@@ -63,6 +63,7 @@ type RPCProcess struct {
 
 func StartRPCProcess(ctx context.Context, command string, args, environment []string) (*RPCProcess, error) {
 	cmd := exec.CommandContext(ctx, command, args...)
+	configureChildProcess(cmd)
 	cmd.Env = append(cmd.Environ(), environment...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
