@@ -82,6 +82,12 @@ class MainActivity : ComponentActivity() {
                         executeCommand { controller.sendTurn(threadId, prompt) }
                     },
                     logs = logs,
+                    onSteerTurn = { threadId, turnId, prompt ->
+                        executeCommand { controller.steerTurn(threadId, turnId, prompt) }
+                    },
+                    onInterruptTurn = { threadId, turnId ->
+                        executeCommand { controller.interruptTurn(threadId, turnId) }
+                    },
                 )
             }
         }

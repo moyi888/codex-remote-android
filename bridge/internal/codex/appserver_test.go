@@ -81,6 +81,13 @@ func TestAppServerAdapterMapsModels(t *testing.T) {
 	}
 }
 
+func TestAppServerAdapterAdvertisesTurnControl(t *testing.T) {
+	capabilities := NewAppServerAdapter(&recordingRPC{}, nil).Capabilities()
+	if !capabilities.ReadThreads || !capabilities.StartTask || !capabilities.SendTurn || !capabilities.Steer || !capabilities.StopTurn {
+		t.Fatalf("unexpected capabilities: %+v", capabilities)
+	}
+}
+
 type modelWithoutReasoningRPC struct{}
 
 func (modelWithoutReasoningRPC) Call(_ context.Context, method string, _, result any) error {

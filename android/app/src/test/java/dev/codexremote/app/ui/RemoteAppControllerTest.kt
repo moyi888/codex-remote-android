@@ -84,6 +84,17 @@ class RemoteAppControllerTest {
     }
 
     @Test
+    fun activeTurnCommandsUseAuthenticatedConnection() {
+        val gateway = FakeGateway(savedConnection = connection())
+        val controller = controller(gateway)
+        controller.resume()
+
+        assertEquals(CommandDelivery.Sent, controller.steerTurn("thread-1", "turn-7", "补充说明"))
+        assertEquals(CommandDelivery.Sent, controller.interruptTurn("thread-1", "turn-7"))
+        assertEquals(listOf("turn.steer", "turn.interrupt"), gateway.commands.map { it.type })
+    }
+
+    @Test
     fun sendingBeforePairingRequiresAuthentication() {
         val controller = controller(FakeGateway())
 

@@ -48,9 +48,53 @@ func NewServer(pairing *auth.PairingService, adapter codex.Adapter, options ...O
 	server.mux.HandleFunc("GET /v1/health", server.health)
 	server.mux.HandleFunc("POST /v1/pair/exchange", server.pairExchange)
 	server.mux.Handle("GET /v1/snapshot", server.requireDevice(http.HandlerFunc(server.snapshot)))
+	server.mux.Handle("GET /v1/threads/{threadID}", server.requireDevice(http.HandlerFunc(server.threadRead)))
+	server.mux.Handle("GET /v1/threads/{threadID}/turns", server.requireDevice(http.HandlerFunc(server.threadTurns)))
 	server.mux.Handle("POST /v1/commands", server.requireDevice(http.HandlerFunc(server.command)))
 	server.mux.Handle("GET /v1/events", server.requireDevice(http.HandlerFunc(server.eventStream)))
 	return server
+}
+
+type threadReader interface {
+	ReadThread(context.Context, string, bool) (json.RawMessage, error)
+	ListThreadTurns(context.Context, string, string, int) (json.RawMessage, error)
+}
+
+func (s *Server) threadRead(writer http.ResponseWriter, request *http.Request) {
+	reader, ok := s.adapter.(threadReader)
+	if !ok {
+		writeError(writer, http.StatusNotImplemented, "thread history is not supported")
+		return
+	}
+	payload, err := reader.ReadThread(request.Context(), request.PathValue("threadID"), true)
+	if err != nil {
+		writeError(writer, http.StatusBadGateway, "failed to read thread")
+		return
+	}
+	writeRawJSON(writer, http.StatusOK, payload)
+}
+
+func (s *Server) threadTurns(writer http.ResponseWriter, request *http.Request) {
+	reader, ok := s.adapter.(threadReader)
+	if !ok {
+		writeError(writer, http.StatusNotImplemented, "thread history is not supported")
+		return
+	}
+	limit := 50
+	if raw := request.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 100 {
+			writeError(writer, http.StatusBadRequest, "invalid turn limit")
+			return
+		}
+		limit = parsed
+	}
+	payload, err := reader.ListThreadTurns(request.Context(), request.PathValue("threadID"), request.URL.Query().Get("cursor"), limit)
+	if err != nil {
+		writeError(writer, http.StatusBadGateway, "failed to list thread turns")
+		return
+	}
+	writeRawJSON(writer, http.StatusOK, payload)
 }
 
 func (s *Server) eventStream(writer http.ResponseWriter, request *http.Request) {
@@ -236,4 +280,10 @@ func writeJSON(writer http.ResponseWriter, status int, value any) {
 	if err := json.NewEncoder(writer).Encode(value); err != nil {
 		_ = fmt.Errorf("encode response: %w", err)
 	}
+}
+
+func writeRawJSON(writer http.ResponseWriter, status int, payload json.RawMessage) {
+	writer.Header().Set("Content-Type", "application/json")
+	writer.WriteHeader(status)
+	_, _ = writer.Write(payload)
 }

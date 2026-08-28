@@ -11,6 +11,7 @@ import dev.codexremote.app.diagnostics.DiagnosticLogs
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
@@ -59,6 +60,29 @@ class BridgeHttpClient(
         return execute(request)
     }
 
+    fun threadRead(baseUrl: String, credential: DeviceCredential, threadId: String): JsonObject {
+        val request = authenticatedRequest(baseUrl, "v1/threads/${java.net.URLEncoder.encode(threadId, "UTF-8")}", credential)
+            .get()
+            .build()
+        return execute(request)
+    }
+
+    fun threadTurns(
+        baseUrl: String,
+        credential: DeviceCredential,
+        threadId: String,
+        cursor: String? = null,
+        limit: Int = 50,
+    ): JsonObject {
+        val encodedId = java.net.URLEncoder.encode(threadId, "UTF-8")
+        val url = endpoint(baseUrl, "v1/threads/$encodedId/turns").newBuilder()
+            .addQueryParameter("limit", limit.toString())
+            .apply { cursor?.takeIf { it.isNotBlank() }?.let { addQueryParameter("cursor", it) } }
+            .build()
+        val request = authenticatedRequest(url, credential).get().build()
+        return execute(request)
+    }
+
     fun sendCommand(
         baseUrl: String,
         credential: DeviceCredential,
@@ -77,6 +101,11 @@ class BridgeHttpClient(
     ): Request.Builder = Request.Builder()
         .url(endpoint(baseUrl, path))
         .header("Authorization", "Device ${credential.deviceId}:${credential.credential}")
+
+    private fun authenticatedRequest(url: HttpUrl, credential: DeviceCredential): Request.Builder =
+        Request.Builder()
+            .url(url)
+            .header("Authorization", "Device ${credential.deviceId}:${credential.credential}")
 
     private fun endpoint(baseUrl: String, path: String): HttpUrl {
         val origin = try {

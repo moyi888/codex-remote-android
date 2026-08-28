@@ -53,6 +53,8 @@ fun RemoteApp(
     onStartTask: (String, String, String?, String?) -> Unit,
     onSendTurn: (String, String) -> Unit,
     logs: DiagnosticLogStore,
+    onSteerTurn: (String, String, String) -> Unit = { _, _, _ -> },
+    onInterruptTurn: (String, String) -> Unit = { _, _ -> },
 ) {
     var showLogs by remember { mutableStateOf(false) }
     if (showLogs) {
@@ -77,6 +79,8 @@ fun RemoteApp(
             onStartTask = onStartTask,
             onSendTurn = onSendTurn,
             onOpenLogs = { showLogs = true },
+            onSteerTurn = onSteerTurn,
+            onInterruptTurn = onInterruptTurn,
         )
     }
 }
@@ -93,6 +97,8 @@ private fun HomeScreen(
     onStartTask: (String, String, String?, String?) -> Unit,
     onSendTurn: (String, String) -> Unit,
     onOpenLogs: () -> Unit,
+    onSteerTurn: (String, String, String) -> Unit,
+    onInterruptTurn: (String, String) -> Unit,
 ) {
     var page by remember(state.snapshot?.eventCursor) { mutableStateOf(HomePage.THREADS) }
     var selectedThread by remember(state.snapshot?.eventCursor) {
@@ -150,8 +156,12 @@ private fun HomeScreen(
                     ThreadDetailScreen(
                         thread = thread,
                         canSend = state.snapshot?.capabilities?.sendTurn == true,
+                        canSteer = state.snapshot?.capabilities?.steer == true,
+                        canInterrupt = state.snapshot?.capabilities?.stopTurn == true,
                         busy = busy,
                         onSend = onSendTurn,
+                        onSteer = onSteerTurn,
+                        onInterrupt = onInterruptTurn,
                     )
                 }
             }
@@ -195,14 +205,20 @@ internal fun threadListItemKey(index: Int, thread: ThreadSummary): String =
 private fun ThreadDetailScreen(
     thread: ThreadSummary,
     canSend: Boolean,
+    canSteer: Boolean,
+    canInterrupt: Boolean,
     busy: Boolean,
     onSend: (String, String) -> Unit,
+    onSteer: (String, String, String) -> Unit,
+    onInterrupt: (String, String) -> Unit,
 ) {
     var prompt by remember(thread.id) { mutableStateOf("") }
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        val activeTurn = thread.activeTurnId
+        val canSteerCurrent = activeTurn != null && thread.state == ThreadState.RUNNING && canSteer
         Text(thread.title, style = MaterialTheme.typography.headlineSmall)
         Text("项目：${thread.projectName}")
         Text("状态：${thread.state.label()}")
@@ -216,13 +232,27 @@ private fun ThreadDetailScreen(
             modifier = Modifier.fillMaxWidth(),
             label = { Text("继续对话") },
             minLines = 4,
-            enabled = !busy && canSend,
+            enabled = !busy && (canSend || canSteerCurrent),
         )
         Button(
             onClick = { onSend(thread.id, prompt) },
             enabled = !busy && canSend && prompt.isNotBlank(),
             modifier = Modifier.fillMaxWidth(),
-        ) { Text(if (busy) "发送中…" else "发送") }
+        ) { Text(if (busy) "发送中…" else "发送新一轮") }
+        if (canSteerCurrent) {
+            Button(
+                onClick = { onSteer(thread.id, activeTurn!!, prompt) },
+                enabled = !busy && prompt.isNotBlank(),
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(if (busy) "发送中…" else "追加到当前执行") }
+        }
+        if (activeTurn != null && thread.state == ThreadState.RUNNING && canInterrupt) {
+            Button(
+                onClick = { onInterrupt(thread.id, activeTurn) },
+                enabled = !busy,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(if (busy) "处理中…" else "中止当前执行") }
+        }
     }
 }
 

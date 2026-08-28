@@ -33,6 +33,26 @@ func (e *CommandExecutor) Execute(ctx context.Context, command domain.CommandEnv
 			return nil, err
 		}
 		return json.RawMessage(`{"accepted":true}`), nil
+	case "thread.steer", "turn.steer":
+		var request SendTurnRequest
+		if err := json.Unmarshal(command.Payload, &request); err != nil {
+			return nil, fmt.Errorf("invalid %s payload: %w", command.Type, err)
+		}
+		if err := e.adapter.Steer(ctx, request); err != nil {
+			return nil, err
+		}
+		return json.RawMessage(`{"accepted":true}`), nil
+	case "thread.interrupt", "turn.interrupt":
+		var request struct {
+			ThreadID string `json:"threadId"`
+		}
+		if err := json.Unmarshal(command.Payload, &request); err != nil {
+			return nil, fmt.Errorf("invalid %s payload: %w", command.Type, err)
+		}
+		if err := e.adapter.StopTurn(ctx, request.ThreadID); err != nil {
+			return nil, err
+		}
+		return json.RawMessage(`{"accepted":true}`), nil
 	default:
 		return nil, fmt.Errorf("unsupported command type %q", command.Type)
 	}

@@ -32,14 +32,15 @@ type Attention struct {
 }
 
 type ThreadSummary struct {
-	ID          string       `json:"id"`
-	Title       string       `json:"title"`
-	ProjectID   string       `json:"projectId"`
-	ProjectName string       `json:"projectName"`
-	Source      ThreadSource `json:"source"`
-	State       ThreadState  `json:"state"`
-	UpdatedAt   time.Time    `json:"updatedAt"`
-	Attention   *Attention   `json:"attention,omitempty"`
+	ID           string       `json:"id"`
+	Title        string       `json:"title"`
+	ProjectID    string       `json:"projectId"`
+	ProjectName  string       `json:"projectName"`
+	Source       ThreadSource `json:"source"`
+	State        ThreadState  `json:"state"`
+	UpdatedAt    time.Time    `json:"updatedAt"`
+	ActiveTurnID string       `json:"activeTurnId,omitempty"`
+	Attention    *Attention   `json:"attention,omitempty"`
 }
 
 type ProjectOption struct {

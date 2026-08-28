@@ -50,6 +50,37 @@ class CommandFactory(
         )
     }
 
+    fun steerTurn(threadId: String, turnId: String, prompt: String): CommandEnvelope {
+        val normalizedThreadId = threadId.trim()
+        val normalizedTurnId = turnId.trim()
+        val normalizedPrompt = prompt.trim()
+        require(normalizedThreadId.isNotEmpty()) { "thread is required" }
+        require(normalizedTurnId.isNotEmpty()) { "turn is required" }
+        require(normalizedPrompt.isNotEmpty()) { "prompt is required" }
+        return command(
+            type = "turn.steer",
+            payload = buildJsonObject {
+                put("threadId", normalizedThreadId)
+                put("turnId", normalizedTurnId)
+                put("prompt", normalizedPrompt)
+            },
+        )
+    }
+
+    fun interruptTurn(threadId: String, turnId: String): CommandEnvelope {
+        val normalizedThreadId = threadId.trim()
+        val normalizedTurnId = turnId.trim()
+        require(normalizedThreadId.isNotEmpty()) { "thread is required" }
+        require(normalizedTurnId.isNotEmpty()) { "turn is required" }
+        return command(
+            type = "turn.interrupt",
+            payload = buildJsonObject {
+                put("threadId", normalizedThreadId)
+                put("turnId", normalizedTurnId)
+            },
+        )
+    }
+
     private fun command(
         type: String,
         payload: kotlinx.serialization.json.JsonObject,

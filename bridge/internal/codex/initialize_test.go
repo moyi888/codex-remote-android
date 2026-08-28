@@ -8,11 +8,13 @@ import (
 
 type recordingTransport struct {
 	methods       []string
+	params        []any
 	notifications []string
 }
 
-func (r *recordingTransport) Call(_ context.Context, method string, _ any, result any) error {
+func (r *recordingTransport) Call(_ context.Context, method string, params any, result any) error {
 	r.methods = append(r.methods, method)
+	r.params = append(r.params, params)
 	return json.Unmarshal([]byte(`{"userAgent":"codex-test"}`), result)
 }
 
@@ -31,5 +33,13 @@ func TestInitializeTransportPerformsHandshake(t *testing.T) {
 	}
 	if len(transport.notifications) != 1 || transport.notifications[0] != "initialized" {
 		t.Fatalf("notifications = %+v", transport.notifications)
+	}
+	params, ok := transport.params[0].(map[string]any)
+	if !ok {
+		t.Fatalf("initialize params = %#v", transport.params[0])
+	}
+	capabilities, ok := params["capabilities"].(map[string]any)
+	if !ok || capabilities["experimentalApi"] != true {
+		t.Fatalf("initialize capabilities = %#v", params["capabilities"])
 	}
 }

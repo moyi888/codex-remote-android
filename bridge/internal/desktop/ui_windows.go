@@ -6,6 +6,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"image"
+	"image/color"
+	"image/draw"
 	"image/png"
 	"os"
 	"os/exec"
@@ -154,6 +157,11 @@ func RunApplication(version string) error {
 	}
 	defer mainWindow.Dispose()
 	mainWindow.SetIcon(walk.IconApplication())
+	brandIcon, iconErr := newBrandIcon()
+	if iconErr == nil {
+		_ = mainWindow.SetIcon(brandIcon)
+		defer brandIcon.Dispose()
+	}
 
 	applyState := func(state DesktopState) {
 		mainWindow.Synchronize(func() {
@@ -209,7 +217,10 @@ func RunApplication(version string) error {
 		return err
 	}
 	defer notifyIcon.Dispose()
-	_ = notifyIcon.SetIcon(walk.IconApplication())
+	if brandIcon, err := newBrandIcon(); err == nil {
+		_ = notifyIcon.SetIcon(brandIcon)
+		defer brandIcon.Dispose()
+	}
 	_ = notifyIcon.SetToolTip("Codex Remote")
 	showAction := walk.NewAction()
 	_ = showAction.SetText("显示 Codex Remote")
@@ -281,6 +292,29 @@ func RunApplication(version string) error {
 		currentBitmap.Dispose()
 	}
 	return nil
+}
+
+// newBrandIcon draws the same compact CR mark used by the Android launcher.
+// Drawing it at runtime keeps the Windows GUI and tray icon self-contained,
+// without a second binary resource that can drift from the mobile artwork.
+func newBrandIcon() (*walk.Icon, error) {
+	const size = 64
+	img := image.NewRGBA(image.Rect(0, 0, size, size))
+	draw.Draw(img, img.Bounds(), &image.Uniform{C: color.RGBA{R: 27, G: 27, B: 31, A: 255}}, image.Point{}, draw.Src)
+	blue := &image.Uniform{C: color.RGBA{R: 120, G: 169, B: 255, A: 255}}
+	white := &image.Uniform{C: color.White}
+	// Block-letter C.
+	draw.Draw(img, image.Rect(12, 13, 20, 51), blue, image.Point{}, draw.Src)
+	draw.Draw(img, image.Rect(20, 13, 31, 21), blue, image.Point{}, draw.Src)
+	draw.Draw(img, image.Rect(20, 43, 31, 51), blue, image.Point{}, draw.Src)
+	// Block-letter R.
+	draw.Draw(img, image.Rect(34, 13, 42, 51), blue, image.Point{}, draw.Src)
+	draw.Draw(img, image.Rect(42, 13, 53, 21), blue, image.Point{}, draw.Src)
+	draw.Draw(img, image.Rect(42, 28, 53, 36), blue, image.Point{}, draw.Src)
+	draw.Draw(img, image.Rect(50, 20, 58, 30), blue, image.Point{}, draw.Src)
+	draw.Draw(img, image.Rect(47, 36, 55, 43), white, image.Point{}, draw.Src)
+	draw.Draw(img, image.Rect(53, 43, 59, 51), white, image.Point{}, draw.Src)
+	return walk.NewIconFromImage(img)
 }
 
 type viewNotifierFunc func(DesktopState)

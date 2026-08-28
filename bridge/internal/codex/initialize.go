@@ -15,7 +15,7 @@ func InitializeTransport(ctx context.Context, transport RPCTransport, version st
 		"clientInfo": map[string]any{
 			"name": "codex-remote-android", "title": "Codex Remote Bridge", "version": version,
 		},
-		"capabilities": map[string]any{},
+		"capabilities": map[string]any{"experimentalApi": true},
 	}, &response); err != nil {
 		return err
 	}

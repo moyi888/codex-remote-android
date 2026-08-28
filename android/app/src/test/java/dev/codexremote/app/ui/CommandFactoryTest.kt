@@ -58,6 +58,25 @@ class CommandFactoryTest {
     }
 
     @Test
+    fun createsTurnSteerForActiveTurn() {
+        val command = factory.steerTurn("thread-1", "turn-7", "继续执行")
+
+        assertEquals("turn.steer", command.type)
+        assertEquals(JsonPrimitive("thread-1"), command.payload["threadId"])
+        assertEquals(JsonPrimitive("turn-7"), command.payload["turnId"])
+        assertEquals(JsonPrimitive("继续执行"), command.payload["prompt"])
+    }
+
+    @Test
+    fun createsTurnInterruptForActiveTurn() {
+        val command = factory.interruptTurn("thread-1", "turn-7")
+
+        assertEquals("turn.interrupt", command.type)
+        assertEquals(JsonPrimitive("thread-1"), command.payload["threadId"])
+        assertEquals(JsonPrimitive("turn-7"), command.payload["turnId"])
+    }
+
+    @Test
     fun rejectsBlankPrompts() {
         assertRejected { factory.startTask("project-1", " \n ", null, null) }
         assertRejected { factory.sendTurn("thread-1", "\t") }
@@ -68,6 +87,10 @@ class CommandFactoryTest {
         assertRejected { factory.startTask(" ", "执行", null, null) }
         assertRejected { factory.startTask("project-1", "执行", null, "high") }
         assertRejected { factory.sendTurn("", "继续") }
+        assertRejected { factory.steerTurn("thread-1", "", "继续") }
+        assertRejected { factory.steerTurn("thread-1", "turn-1", " ") }
+        assertRejected { factory.interruptTurn("", "turn-1") }
+        assertRejected { factory.interruptTurn("thread-1", "") }
     }
 
     private fun assertRejected(action: () -> Unit) {

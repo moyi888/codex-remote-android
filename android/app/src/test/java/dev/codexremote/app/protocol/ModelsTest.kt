@@ -59,6 +59,7 @@ class ModelsTest {
                 "projectName": "示例项目",
                 "source": "desktop",
                 "state": "running",
+                "activeTurnId": "turn-7",
                 "updatedAt": "2026-08-25T12:00:00Z",
                 "attention": {
                   "category": "browser_authorization",
@@ -76,6 +77,7 @@ class ModelsTest {
         assertEquals(42L, envelope.eventCursor)
         assertEquals("thread-1", envelope.payload.id)
         assertEquals(ThreadState.RUNNING, envelope.payload.state)
+        assertEquals("turn-7", envelope.payload.activeTurnId)
         assertNotNull(envelope.payload.attention)
         assertEquals("github.com", envelope.payload.attention?.site)
     }

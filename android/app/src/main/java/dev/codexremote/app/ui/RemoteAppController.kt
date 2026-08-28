@@ -87,6 +87,14 @@ class RemoteAppController(
         factory.sendTurn(threadId, prompt)
     }
 
+    fun steerTurn(threadId: String, turnId: String, prompt: String): CommandDelivery = send { factory ->
+        factory.steerTurn(threadId, turnId, prompt)
+    }
+
+    fun interruptTurn(threadId: String, turnId: String): CommandDelivery = send { factory ->
+        factory.interruptTurn(threadId, turnId)
+    }
+
     private fun load(value: StoredBridgeConnection): LoadResult {
         val snapshot = gateway.loadSnapshot(value)
         connection = value

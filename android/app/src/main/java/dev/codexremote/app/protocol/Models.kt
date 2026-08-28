@@ -103,6 +103,7 @@ data class ThreadSummary(
     val source: ThreadSource,
     val state: ThreadState,
     val updatedAt: String,
+    val activeTurnId: String? = null,
     val attention: Attention? = null,
 )
 
