@@ -10,7 +10,7 @@
 
 1. 电脑安装并登录 [Tailscale for Windows](https://tailscale.com/download/windows)
 2. 手机安装并登录 [Tailscale for Android](https://tailscale.com/download/android)
-3. 从 [v0.2.0-alpha.4 发布页](https://github.com/moyi888/codex-remote-android/releases/tag/v0.2.0-alpha.4)下载并打开 Windows App，同时安装 Android APK
+3. 从 [v0.2.0-alpha.5 发布页](https://github.com/moyi888/codex-remote-android/releases/tag/v0.2.0-alpha.5)下载并打开 Windows App，同时安装 Android APK
 4. 用 Android App 扫描 Windows App 显示的二维码
 
 Tailnet 是同一 Tailscale 账号或组织下设备组成的私有网络。两台设备登录同一个 Tailnet 后，Windows App 会自动发现 Tailscale 地址、启动本地 Bridge 并显示一次性二维码。无需手填 IP、端口或 Tailscale ACL，也无需创建项目白名单配置。
@@ -19,7 +19,7 @@ Tailscale 仍需在电脑和手机上单独安装并完成登录。本项目不�
 
 ## 下载
 
-在 [v0.2.0-alpha.4 发布页](https://github.com/moyi888/codex-remote-android/releases/tag/v0.2.0-alpha.4)下载：
+在 [v0.2.0-alpha.5 发布页](https://github.com/moyi888/codex-remote-android/releases/tag/v0.2.0-alpha.5)下载：
 
 - `codex-remote-windows-*.exe`：Windows App
 - `codex-remote-cli-windows-*.exe`：保留控制台输出的高级命令行版本
@@ -53,7 +53,7 @@ Android App 内置“诊断日志”。扫码失败后点击“诊断日志”�
 通常直接双击 `codex-remote-windows-*.exe` 即可，它是不会弹出控制台窗口的托盘 App。命令行模式使用 `codex-remote-cli-windows-*.exe`，用于调试、自定义监听地址或兼容已有部署：
 
 ```powershell
-.\codex-remote-cli-windows-v0.2.0-alpha.4.exe serve `
+.\codex-remote-cli-windows-v0.2.0-alpha.5.exe serve `
   --listen 100.88.10.20:8787 `
   --advertise-url http://100.88.10.20:8787 `
   --projects .\projects.json `
@@ -66,7 +66,7 @@ Android App 内置“诊断日志”。扫码失败后点击“诊断日志”�
 - `--projects`：兼容旧版的显式项目 registry；桌面主流程不需要它。
 - `--codex-command`：指定自定义 Codex 启动命令。
 
-直接运行 `codex-remote-cli-windows-v0.2.0-alpha.4.exe version` 可查看版本（文件名中的版本号以实际下载为准）。高级模式中的监听地址仍应仅对 Tailnet 开放。
+直接运行 `codex-remote-cli-windows-v0.2.0-alpha.5.exe version` 可查看版本（文件名中的版本号以实际下载为准）。高级模式中的监听地址仍应仅对 Tailnet 开放。
 
 ## 从源码验证
 

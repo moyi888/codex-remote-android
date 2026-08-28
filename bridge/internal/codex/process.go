@@ -61,6 +61,8 @@ type RPCProcess struct {
 	closeOnce    sync.Once
 }
 
+const maxRPCMessageBytes = 16 << 20
+
 func StartRPCProcess(ctx context.Context, command string, args, environment []string) (*RPCProcess, error) {
 	cmd := exec.CommandContext(ctx, command, args...)
 	configureChildProcess(cmd)
@@ -76,8 +78,10 @@ func StartRPCProcess(ctx context.Context, command string, args, environment []st
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 64*1024), maxRPCMessageBytes)
 	process := &RPCProcess{
-		cmd: cmd, stdin: stdin, scan: bufio.NewScanner(stdout), notify: make(chan Notification, 64),
+		cmd: cmd, stdin: stdin, scan: scanner, notify: make(chan Notification, 64),
 		responses: make(chan scanResult, 64), done: make(chan error, 1), waitComplete: make(chan struct{}),
 	}
 	go process.readLoop()

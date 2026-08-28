@@ -48,6 +48,24 @@ func TestRPCProcessCorrelatesResponse(t *testing.T) {
 	}
 }
 
+func TestRPCProcessHandlesLargeJSONLine(t *testing.T) {
+	process, err := StartRPCProcess(context.Background(), os.Args[0], []string{"-test.run=TestRPCProcessLargeResponseHelper", "--"}, []string{"CODEX_REMOTE_LARGE_RESPONSE_HELPER=1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer process.Close()
+
+	var result struct {
+		Payload string `json:"payload"`
+	}
+	if err := process.Call(context.Background(), "thread/list", nil, &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Payload) != 128*1024 {
+		t.Fatalf("payload length = %d, want %d", len(result.Payload), 128*1024)
+	}
+}
+
 func TestRPCProcessSkipsNotificationBeforeResponse(t *testing.T) {
 	process, err := StartRPCProcess(context.Background(), os.Args[0], []string{"-test.run=TestRPCProcessNotificationHelper", "--"}, []string{"CODEX_REMOTE_NOTIFICATION_HELPER=1"})
 	if err != nil {
@@ -186,6 +204,34 @@ func TestRPCProcessHelper(t *testing.T) {
 		os.Exit(4)
 	}
 	fmt.Printf(`{"id":%d,"result":{"echo":%q}}`+"\n", request.ID, request.Method)
+	os.Exit(0)
+}
+
+func TestRPCProcessLargeResponseHelper(t *testing.T) {
+	if os.Getenv("CODEX_REMOTE_LARGE_RESPONSE_HELPER") != "1" {
+		return
+	}
+	scanner := bufio.NewScanner(os.Stdin)
+	if !scanner.Scan() {
+		os.Exit(2)
+	}
+	var request struct {
+		ID uint64 `json:"id"`
+	}
+	if err := json.Unmarshal(scanner.Bytes(), &request); err != nil {
+		os.Exit(3)
+	}
+	result := struct {
+		Payload string `json:"payload"`
+	}{Payload: strings.Repeat("x", 128*1024)}
+	encoded, err := json.Marshal(struct {
+		ID     uint64 `json:"id"`
+		Result any    `json:"result"`
+	}{ID: request.ID, Result: result})
+	if err != nil {
+		os.Exit(4)
+	}
+	fmt.Println(string(encoded))
 	os.Exit(0)
 }
 
