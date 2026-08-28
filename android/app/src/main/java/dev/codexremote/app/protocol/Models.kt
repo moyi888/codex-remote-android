@@ -143,7 +143,7 @@ object ThreadHistoryParser {
     }
 
     private fun parseTurns(turns: List<JsonElement>, threadId: String, nextCursor: String?): ThreadHistory {
-        val entries = turns.flatMapIndexed { turnIndex, element ->
+        val entries = turns.asReversed().flatMapIndexed { turnIndex, element ->
             val turn = element.jsonObjectOrNull() ?: return@flatMapIndexed emptyList()
             val pageKey = nextCursor?.takeIf { it.isNotBlank() } ?: "initial"
             val turnId = turn["id"]?.stringOrNull() ?: "$threadId-turn-$pageKey-$turnIndex"
@@ -157,7 +157,7 @@ object ThreadHistoryParser {
                 items.mapIndexedNotNull { index, item -> itemEntry(item, "$turnId-item-$index") }
             }
         }
-        return ThreadHistory(entries, nextCursor)
+        return ThreadHistory(entries.distinctBy { it.id }, nextCursor)
     }
 
     private fun itemEntry(item: JsonElement, fallbackId: String): ConversationEntry? {

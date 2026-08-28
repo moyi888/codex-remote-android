@@ -46,6 +46,17 @@ class ModelsTest {
         assertEquals("cursor-3", history.nextCursor)
         assertEquals(listOf("历史消息"), history.entries.map { it.text })
     }
+
+    @Test
+    fun displaysTurnsInChatChronologicalOrder() {
+        val raw = Json.parseToJsonElement(
+            """{"turns":[{"id":"new","items":[{"type":"userMessage","text":"最新"}]},{"id":"old","items":[{"type":"agentMessage","text":"更早"}]}]}""",
+        ).jsonObject
+
+        val history = ThreadHistoryParser.fromTurnsResponse(raw, "thread-1")
+
+        assertEquals(listOf("更早", "最新"), history.entries.map { it.text })
+    }
     @Test
     fun decodesSnapshotEventCursor() {
         val raw = """

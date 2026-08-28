@@ -39,7 +39,7 @@ class MainActivity : ComponentActivity() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val pollRunnable = object : Runnable {
         override fun run() {
-            if (loadResult is LoadResult.Ready && !busy) resumeConnection()
+            if (loadResult is LoadResult.Ready && !busy && !refreshing) refreshSnapshot()
             mainHandler.postDelayed(this, POLL_INTERVAL_MS)
         }
     }
@@ -47,6 +47,7 @@ class MainActivity : ComponentActivity() {
     private var loadResult by mutableStateOf<LoadResult>(LoadResult.Unpaired)
     private var appState by mutableStateOf(RemoteAppState())
     private var busy by mutableStateOf(false)
+    private var refreshing by mutableStateOf(false)
     private var deliveryMessage by mutableStateOf<String?>(null)
     private var cameraPermission by mutableStateOf(CameraPermission.REQUESTABLE)
     private val logs = DiagnosticLogs.instance
@@ -133,6 +134,23 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun resumeConnection() = executeLoad(controller::resume)
+
+    private fun refreshSnapshot() {
+        if (busy || refreshing || loadResult !is LoadResult.Ready) return
+        refreshing = true
+        worker.execute {
+            try {
+                val snapshot = controller.refreshSnapshot()
+                postToActiveActivity {
+                    appState = appState.withSnapshot(snapshot)
+                    refreshing = false
+                }
+            } catch (error: Exception) {
+                logs.error("connection", "background snapshot refresh failed", error)
+                postToActiveActivity { refreshing = false }
+            }
+        }
+    }
 
     private fun executeLoad(action: () -> LoadResult) {
         if (busy) return

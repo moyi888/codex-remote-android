@@ -103,6 +103,15 @@ class RemoteAppController(
         return gateway.loadThreadHistory(current, threadId, cursor)
     }
 
+    /** Refreshes the snapshot without toggling the foreground service or UI load state. */
+    fun refreshSnapshot(): Snapshot {
+        val current = connection ?: throw IllegalStateException("not paired")
+        logs.debug("connection", "snapshot refresh started")
+        return gateway.loadSnapshot(current).also {
+            logs.debug("connection", "snapshot refresh succeeded threads=${it.threads.size}")
+        }
+    }
+
     private fun load(value: StoredBridgeConnection): LoadResult {
         val snapshot = gateway.loadSnapshot(value)
         connection = value

@@ -42,7 +42,7 @@ data class RemoteAppState(
         val previous = histories[threadId]
         val merged = if (append && previous != null) {
             val entriesById = LinkedHashMap<String, dev.codexremote.app.protocol.ConversationEntry>()
-            (previous.entries + history.entries).forEach { entry -> entriesById[entry.id] = entry }
+            (history.entries + previous.entries).forEach { entry -> entriesById[entry.id] = entry }
             history.copy(entries = entriesById.values.toList())
         } else history
         return copy(histories = histories + (threadId to merged))

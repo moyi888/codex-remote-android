@@ -37,6 +37,19 @@ class RemoteAppControllerTest {
     }
 
     @Test
+    fun refreshSnapshotUsesSavedConnectionWithoutStartingAnotherService() {
+        val gateway = FakeGateway(savedConnection = connection())
+        val controller = controller(gateway)
+        controller.resume()
+
+        val refreshed = controller.refreshSnapshot()
+
+        assertEquals(42L, refreshed.eventCursor)
+        assertEquals(2, gateway.snapshotLoads)
+        assertEquals(1, gateway.serviceStarts)
+    }
+
+    @Test
     fun pairingExchangesSavesLoadsSnapshotAndStartsService() {
         val gateway = FakeGateway(exchangeResult = connection())
 

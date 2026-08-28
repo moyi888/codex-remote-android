@@ -19,15 +19,15 @@ class RemoteAppStateTest {
     fun appendsPagedHistoryWithoutDroppingExistingEntries() {
         val initial = RemoteAppState().withHistory(
             "thread-1",
-            ThreadHistory(listOf(ConversationEntry("1", "用户", "开始")), "next"),
+            ThreadHistory(listOf(ConversationEntry("1", "用户", "最新")), "next"),
         )
         val updated = initial.withHistory(
             "thread-1",
-            ThreadHistory(listOf(ConversationEntry("2", "Codex", "完成")), null),
+            ThreadHistory(listOf(ConversationEntry("2", "Codex", "更早")), null),
             append = true,
         )
 
-        assertEquals(listOf("开始", "完成"), updated.histories["thread-1"]?.entries?.map { it.text })
+        assertEquals(listOf("更早", "最新"), updated.histories["thread-1"]?.entries?.map { it.text })
         assertNull(updated.histories["thread-1"]?.nextCursor)
     }
 

@@ -71,7 +71,11 @@ class CodexRemoteService : Service() {
                 commandFlusher.onStatusChanged(status)
             },
         )
-        supervisor?.start(networkAvailable = false)
+        // registerDefaultNetworkCallback normally delivers an initial callback, but the
+        // active network can already exist when the service starts (for example after the
+        // app returns from background). Seed the supervisor from that state so a persisted
+        // credential reconnects immediately without another QR scan.
+        supervisor?.start(networkAvailable = connectivityManager.activeNetwork != null)
         registerNetworkCallback()
     }
 

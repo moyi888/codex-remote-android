@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -29,6 +30,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -224,8 +227,38 @@ private fun ThreadDetailScreen(
     onLoadMore: (String, String) -> Unit,
 ) {
     var prompt by remember(thread.id) { mutableStateOf("") }
+    val listState = rememberLazyListState()
+    var previousEntryCount by remember(thread.id) { mutableStateOf(0) }
+    var requestedCursor by remember(thread.id) { mutableStateOf<String?>(null) }
+    var autoLoadArmed by remember(thread.id) { mutableStateOf(true) }
     val activeTurn = thread.activeTurnId
     val canSteerCurrent = activeTurn != null && thread.state == ThreadState.RUNNING && canSteer
+    LaunchedEffect(history?.entries?.size) {
+        val entries = history?.entries.orEmpty()
+        if (entries.isNotEmpty()) {
+            val added = entries.size - previousEntryCount
+            if (previousEntryCount == 0) {
+                val firstMessageIndex = if (history?.nextCursor != null) 1 else 0
+                listState.scrollToItem(firstMessageIndex + entries.lastIndex)
+            } else if (added > 0) {
+                listState.scrollToItem(
+                    (listState.firstVisibleItemIndex + added).coerceAtMost(entries.lastIndex),
+                )
+            }
+        }
+        previousEntryCount = entries.size
+    }
+    LaunchedEffect(thread.id, history?.nextCursor, busy) {
+        snapshotFlow { listState.firstVisibleItemIndex }.collect { index ->
+            if (index > 1) autoLoadArmed = true
+            val cursor = history?.nextCursor
+            if (index <= 1 && cursor != null && autoLoadArmed && !busy && cursor != requestedCursor) {
+                autoLoadArmed = false
+                requestedCursor = cursor
+                onLoadMore(thread.id, cursor)
+            }
+        }
+    }
     Column(Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
@@ -238,6 +271,7 @@ private fun ThreadDetailScreen(
         HorizontalDivider()
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             LazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
                 contentPadding = PaddingValues(vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -246,17 +280,29 @@ private fun ThreadDetailScreen(
                     history == null -> item { Text("正在读取历史对话…", color = MaterialTheme.colorScheme.secondary) }
                     history.entries.isEmpty() -> item { Text("暂无可显示的历史消息。", color = MaterialTheme.colorScheme.secondary) }
                     else -> {
-                        itemsIndexed(history.entries, key = { _, entry -> entry.id }) { _, entry ->
-                            Card(Modifier.fillMaxWidth()) {
-                                Column(Modifier.padding(12.dp)) {
-                                    Text(entry.kind, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                                    Text(entry.text, style = MaterialTheme.typography.bodyLarge)
-                                    entry.status?.let { Text(it, style = MaterialTheme.typography.labelSmall) }
-                                }
+                        history.nextCursor?.let { cursor ->
+                            item(key = "load-more-$cursor") {
+                                TextButton(
+                                    onClick = { onLoadMore(thread.id, cursor) },
+                                    enabled = !busy,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) { Text("向上加载更早对话") }
                             }
                         }
-                        history.nextCursor?.let { cursor ->
-                            item { TextButton(onClick = { onLoadMore(thread.id, cursor) }, enabled = !busy) { Text("加载更早记录") } }
+                        itemsIndexed(history.entries, key = { _, entry -> entry.id }) { _, entry ->
+                            val isUser = entry.kind == "用户"
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
+                            ) {
+                                Card(Modifier.fillMaxWidth(0.9f)) {
+                                    Column(Modifier.padding(12.dp)) {
+                                        Text(entry.kind, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                                        Text(entry.text, style = MaterialTheme.typography.bodyLarge)
+                                        entry.status?.let { Text(it, style = MaterialTheme.typography.labelSmall) }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
