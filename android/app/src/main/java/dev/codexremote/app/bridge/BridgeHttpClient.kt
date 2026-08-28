@@ -126,6 +126,7 @@ class BridgeHttpClient(
             logs.error("http", "request failed ${request.method} ${request.url.encodedPath}", error)
             throw error
         }
+    }
 
     private companion object {
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()

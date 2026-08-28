@@ -46,7 +46,10 @@ fun PairingScanner(
         val options = BarcodeScannerOptions.Builder()
             .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
             .build()
-        PairingQrAnalyzer(BarcodeScanning.getClient(options)) { currentOnInvitation(it) }
+        PairingQrAnalyzer(
+            scanner = BarcodeScanning.getClient(options),
+            onInvitation = { currentOnInvitation(it) },
+        )
     }
     var previewView by remember { mutableStateOf<PreviewView?>(null) }
 
