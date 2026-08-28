@@ -6,6 +6,8 @@ import dev.codexremote.app.protocol.DeviceCredential
 import dev.codexremote.app.protocol.PairExchangeRequest
 import dev.codexremote.app.protocol.PairingInvitation
 import dev.codexremote.app.protocol.Snapshot
+import dev.codexremote.app.diagnostics.DiagnosticLogStore
+import dev.codexremote.app.diagnostics.DiagnosticLogs
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -29,6 +31,7 @@ class BridgeApiException(
 class BridgeHttpClient(
     okHttpClient: OkHttpClient = OkHttpClient(),
     private val json: Json = Json { ignoreUnknownKeys = true },
+    private val logs: DiagnosticLogStore = DiagnosticLogs.instance,
 ) {
     private val httpClient = okHttpClient.newBuilder()
         .followRedirects(false)
@@ -98,21 +101,33 @@ class BridgeHttpClient(
         json.encodeToString(value).toRequestBody(JSON_MEDIA_TYPE)
 
     private inline fun <reified T> execute(request: Request): T =
-        httpClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                throw BridgeApiException(
-                    statusCode = response.code,
-                    safeMessage = "Bridge API request failed with HTTP ${response.code}",
-                )
+        executeLogged(request)
+
+    private inline fun <reified T> executeLogged(request: Request): T {
+        val startedAt = System.nanoTime()
+        logs.info("http", "request ${request.method} ${request.url.encodedPath}")
+        return try {
+            httpClient.newCall(request).execute().use { response ->
+                val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000
+                logs.info("http", "response ${request.method} ${request.url.encodedPath} HTTP ${response.code} ${elapsedMs}ms")
+                if (!response.isSuccessful) {
+                    throw BridgeApiException(
+                        statusCode = response.code,
+                        safeMessage = "Bridge API request failed with HTTP ${response.code}",
+                    )
+                }
+                try {
+                    json.decodeFromString(response.body.string())
+                } catch (_: SerializationException) {
+                    throw BridgeApiException(
+                        statusCode = response.code,
+                        safeMessage = "Bridge API returned an invalid response",
+                    )
+                }
             }
-            try {
-                json.decodeFromString(response.body.string())
-            } catch (_: SerializationException) {
-                throw BridgeApiException(
-                    statusCode = response.code,
-                    safeMessage = "Bridge API returned an invalid response",
-                )
-            }
+        } catch (error: Exception) {
+            logs.error("http", "request failed ${request.method} ${request.url.encodedPath}", error)
+            throw error
         }
 
     private companion object {

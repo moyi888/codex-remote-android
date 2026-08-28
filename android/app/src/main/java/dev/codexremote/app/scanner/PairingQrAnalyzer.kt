@@ -7,6 +7,8 @@ import com.google.mlkit.vision.barcode.BarcodeScanner
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 import dev.codexremote.app.protocol.PairingInvitation
+import dev.codexremote.app.diagnostics.DiagnosticLogStore
+import dev.codexremote.app.diagnostics.DiagnosticLogs
 import java.util.concurrent.atomic.AtomicBoolean
 
 sealed interface PairingScanResult {
@@ -53,6 +55,7 @@ class PairingScanGate {
 
 class PairingAnalysisSession(
     private val onInvitation: (String) -> Unit,
+    private val logs: DiagnosticLogStore = DiagnosticLogs.instance,
 ) : AutoCloseable {
     private val lock = Any()
     private val gate = PairingScanGate()
@@ -73,11 +76,17 @@ class PairingAnalysisSession(
                     processing = false
                     finishActiveFrame = null
                     if (!closed) {
-                        rawValues.asSequence()
-                            .map(gate::accept)
-                            .filterIsInstance<PairingScanResult.Invitation>()
-                            .firstOrNull()
-                            ?.let { onInvitation(it.raw) }
+                        logs.debug("scanner", "frame decoded values=${rawValues.size}")
+                        rawValues.asSequence().map(gate::accept).forEach { result ->
+                            when (result) {
+                                is PairingScanResult.Invitation -> {
+                                    logs.info("scanner", "pairing QR recognized length=${result.raw.length}")
+                                    onInvitation(result.raw)
+                                }
+                                PairingScanResult.Rejected -> logs.warn("scanner", "QR rejected by pairing parser")
+                                PairingScanResult.Ignored -> Unit
+                            }
+                        }
                     }
                 }
             } finally {
@@ -120,8 +129,9 @@ class PairingAnalysisSession(
 class PairingQrAnalyzer(
     private val scanner: BarcodeScanner,
     private val onInvitation: (String) -> Unit,
+    private val logs: DiagnosticLogStore = DiagnosticLogs.instance,
 ) : ImageAnalysis.Analyzer, AutoCloseable {
-    private val session = PairingAnalysisSession(onInvitation)
+    private val session = PairingAnalysisSession(onInvitation, logs)
 
     @ExperimentalGetImage
     override fun analyze(imageProxy: ImageProxy) {

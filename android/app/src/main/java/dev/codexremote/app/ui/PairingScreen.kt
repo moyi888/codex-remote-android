@@ -69,6 +69,7 @@ fun PairingScreen(
     onOpenAppSettings: () -> Unit,
     onPasteInvitation: (String) -> Unit,
     onOpenTailscale: () -> Unit,
+    onOpenLogs: () -> Unit = {},
     scanner: @Composable ((String) -> Unit, Modifier) -> Unit = { onInvitation, modifier ->
         PairingScanner(onInvitation = onInvitation, modifier = modifier)
     },
@@ -107,6 +108,7 @@ fun PairingScreen(
             if (cameraPermission == CameraPermission.REQUESTABLE) onRequestCamera()
         },
         onOpenTailscale = onOpenTailscale,
+        onOpenLogs = onOpenLogs,
         onExpandPaste = { pasteExpanded = true },
         onInvitationChange = { invitation = it },
         onPasteInvitation = { onPasteInvitation(invitation) },
@@ -124,6 +126,7 @@ private fun AddComputerScreen(
     onExpandPaste: () -> Unit,
     onInvitationChange: (String) -> Unit,
     onPasteInvitation: () -> Unit,
+    onOpenLogs: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -156,6 +159,7 @@ private fun AddComputerScreen(
         TextButton(onClick = onOpenTailscale, enabled = !busy) {
             Text("打开 Tailscale")
         }
+        TextButton(onClick = onOpenLogs, enabled = !busy) { Text("诊断日志") }
         if (!pasteExpanded) {
             TextButton(
                 onClick = onExpandPaste,

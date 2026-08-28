@@ -12,10 +12,13 @@ import dev.codexremote.app.protocol.Snapshot
 import dev.codexremote.app.protocol.StoredBridgeConnection
 import dev.codexremote.app.security.CredentialVault
 import dev.codexremote.app.service.CodexRemoteService
+import dev.codexremote.app.diagnostics.DiagnosticLogStore
+import dev.codexremote.app.diagnostics.DiagnosticLogs
 
 class AndroidRemoteAppGateway(
     context: Context,
-    private val httpClient: BridgeHttpClient = BridgeHttpClient(),
+    private val logs: DiagnosticLogStore = DiagnosticLogs.instance,
+    private val httpClient: BridgeHttpClient = BridgeHttpClient(logs = logs),
     private val vault: CredentialVault = CredentialVault.create(context),
     private val queue: PendingCommandQueue = PendingCommandQueue.create(context),
     private val clock: () -> String,
@@ -27,17 +30,32 @@ class AndroidRemoteAppGateway(
     override fun exchange(
         invitation: PairingInvitation,
         device: DeviceIdentity,
-    ): StoredBridgeConnection = StoredBridgeConnection(
-        baseUrl = invitation.baseUrl,
-        credential = httpClient.exchange(invitation, device.id, device.name),
-    )
+    ): StoredBridgeConnection {
+        logs.info("pair", "exchange started device=${device.id.take(8)}")
+        return try {
+            StoredBridgeConnection(
+                baseUrl = invitation.baseUrl,
+                credential = httpClient.exchange(invitation, device.id, device.name),
+            ).also { logs.info("pair", "exchange succeeded") }
+        } catch (error: Exception) {
+            logs.error("pair", "exchange failed", error)
+            throw error
+        }
+    }
 
     override fun saveConnection(connection: StoredBridgeConnection) = vault.save(connection)
 
-    override fun loadSnapshot(connection: StoredBridgeConnection): Snapshot = httpClient.snapshot(
-        connection.baseUrl,
-        connection.credential,
-    )
+    override fun loadSnapshot(connection: StoredBridgeConnection): Snapshot {
+        logs.info("snapshot", "load started")
+        return try {
+            httpClient.snapshot(connection.baseUrl, connection.credential).also {
+                logs.info("snapshot", "load succeeded threads=${it.threads.size} projects=${it.projects.size}")
+            }
+        } catch (error: Exception) {
+            logs.error("snapshot", "load failed", error)
+            throw error
+        }
+    }
 
     override fun send(
         connection: StoredBridgeConnection,

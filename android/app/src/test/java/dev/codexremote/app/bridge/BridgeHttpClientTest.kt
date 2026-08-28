@@ -4,6 +4,7 @@ import dev.codexremote.app.protocol.CommandEnvelope
 import dev.codexremote.app.protocol.DeviceCredential
 import dev.codexremote.app.protocol.PairExchangeRequest
 import dev.codexremote.app.protocol.PairingInvitation
+import dev.codexremote.app.diagnostics.DiagnosticLogStore
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
@@ -60,6 +61,24 @@ class BridgeHttpClientTest {
             ),
             Json.parseToJsonElement(request.body.readUtf8()),
         )
+    }
+
+    @Test
+    fun exchangeWritesRedactedRequestAndResponseLogs() {
+        server.enqueue(jsonResponse("""{"protocolVersion":1,"deviceId":"phone-1","credential":"credential-1"}"""))
+        val logs = DiagnosticLogStore()
+        val loggedClient = BridgeHttpClient(logs = logs)
+        val invitation = PairingInvitation.parse(
+            "codex-remote://pair?baseUrl=${encodedBaseUrl()}&token=pair-token",
+        )
+
+        loggedClient.exchange(invitation, "phone-1", "Pixel")
+
+        val rendered = logs.export()
+        assertTrue(rendered.contains("request POST /v1/pair/exchange"))
+        assertTrue(rendered.contains("HTTP 200"))
+        assertFalse(rendered.contains("pair-token"))
+        assertFalse(rendered.contains("credential-1"))
     }
 
     @Test

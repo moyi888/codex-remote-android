@@ -25,6 +25,7 @@ import dev.codexremote.app.ui.NotificationPermissionPolicy
 import dev.codexremote.app.ui.PendingPairingInvitation
 import dev.codexremote.app.ui.RemoteApp
 import dev.codexremote.app.ui.RemoteAppController
+import dev.codexremote.app.diagnostics.DiagnosticLogs
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.ExecutorService
@@ -40,6 +41,7 @@ class MainActivity : ComponentActivity() {
     private var busy by mutableStateOf(false)
     private var deliveryMessage by mutableStateOf<String?>(null)
     private var cameraPermission by mutableStateOf(CameraPermission.REQUESTABLE)
+    private val logs = DiagnosticLogs.instance
     private val pendingPairingInvitation = PendingPairingInvitation()
     private val cameraPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -51,7 +53,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val now = { Instant.now().toString() }
         controller = RemoteAppController(
-            gateway = AndroidRemoteAppGateway(this, clock = now),
+            gateway = AndroidRemoteAppGateway(this, logs = logs, clock = now),
             device = loadDeviceIdentity(),
             newIdentifier = { UUID.randomUUID().toString() },
             now = now,
@@ -79,6 +81,7 @@ class MainActivity : ComponentActivity() {
                     onSendTurn = { threadId, prompt ->
                         executeCommand { controller.sendTurn(threadId, prompt) }
                     },
+                    logs = logs,
                 )
             }
         }
@@ -102,7 +105,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun pair(invitation: String) {
+        logs.info("scanner", "invitation callback received length=${invitation.length}")
         val ready = pendingPairingInvitation.offer(invitation, busy) ?: return
+        logs.info("pair", "invitation accepted for processing")
         executeLoad { controller.pair(ready) }
     }
 
@@ -110,10 +115,12 @@ class MainActivity : ComponentActivity() {
 
     private fun executeLoad(action: () -> LoadResult) {
         if (busy) return
+        logs.debug("connection", "background load scheduled")
         busy = true
         deliveryMessage = null
         worker.execute {
             val result = action()
+            logs.info("connection", "background load finished result=${result::class.simpleName}")
             postToActiveActivity {
                 loadResult = result
                 busy = false

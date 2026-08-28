@@ -4,6 +4,8 @@ import dev.codexremote.app.protocol.CommandEnvelope
 import dev.codexremote.app.protocol.PairingInvitation
 import dev.codexremote.app.protocol.Snapshot
 import dev.codexremote.app.protocol.StoredBridgeConnection
+import dev.codexremote.app.diagnostics.DiagnosticLogStore
+import dev.codexremote.app.diagnostics.DiagnosticLogs
 
 data class DeviceIdentity(
     val id: String,
@@ -52,18 +54,23 @@ class RemoteAppController(
     private val device: DeviceIdentity,
     private val newIdentifier: () -> String,
     private val now: () -> String,
+    private val logs: DiagnosticLogStore = DiagnosticLogs.instance,
 ) {
     private var connection: StoredBridgeConnection? = null
 
     fun resume(): LoadResult = safelyLoad(PairingOperation.RESUME) {
+        logs.info("connection", "resume started")
         val stored = gateway.loadConnection() ?: return LoadResult.Unpaired
         load(stored)
     }
 
     fun pair(rawInvitation: String): LoadResult = safelyLoad(PairingOperation.PAIR) {
+        logs.info("pair", "invitation received length=${rawInvitation.length}")
         val invitation = PairingInvitation.parse(rawInvitation.trim())
+        logs.info("pair", "invitation parsed baseUrl=${invitation.baseUrl}")
         val paired = gateway.exchange(invitation, device)
         gateway.saveConnection(paired)
+        logs.info("pair", "credential saved; loading snapshot")
         load(paired)
     }
 
@@ -105,6 +112,7 @@ class RemoteAppController(
     ): LoadResult = try {
         action()
     } catch (error: Exception) {
+        logs.error("connection", "$operation failed", error)
         LoadResult.Failed(PairingFailureMessage.from(error, operation))
     }
 }

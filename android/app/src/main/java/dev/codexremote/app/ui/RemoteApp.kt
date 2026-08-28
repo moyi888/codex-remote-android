@@ -36,6 +36,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.codexremote.app.protocol.ThreadState
 import dev.codexremote.app.protocol.ThreadSummary
+import dev.codexremote.app.diagnostics.DiagnosticLogStore
 
 @Composable
 fun RemoteApp(
@@ -51,15 +52,22 @@ fun RemoteApp(
     onRefresh: () -> Unit,
     onStartTask: (String, String, String?, String?) -> Unit,
     onSendTurn: (String, String) -> Unit,
+    logs: DiagnosticLogStore,
 ) {
+    var showLogs by remember { mutableStateOf(false) }
+    if (showLogs) {
+        DiagnosticLogScreen(logs, onBack = { showLogs = false })
+        return
+    }
     when (loadResult) {
         LoadResult.Unpaired -> PairingScreen(
             busy, null, cameraPermission, onScannedInvitation, onRequestCamera,
-            onOpenAppSettings, onPair, onOpenTailscale,
+            onOpenAppSettings, onPair, onOpenTailscale, onOpenLogs = { showLogs = true },
         )
         is LoadResult.Failed -> PairingScreen(
             busy, loadResult.message, cameraPermission,
             onScannedInvitation, onRequestCamera, onOpenAppSettings, onPair, onOpenTailscale,
+            onOpenLogs = { showLogs = true },
         )
         is LoadResult.Ready -> HomeScreen(
             state = loadResult.state,
@@ -68,6 +76,7 @@ fun RemoteApp(
             onRefresh = onRefresh,
             onStartTask = onStartTask,
             onSendTurn = onSendTurn,
+            onOpenLogs = { showLogs = true },
         )
     }
 }
@@ -83,6 +92,7 @@ private fun HomeScreen(
     onRefresh: () -> Unit,
     onStartTask: (String, String, String?, String?) -> Unit,
     onSendTurn: (String, String) -> Unit,
+    onOpenLogs: () -> Unit,
 ) {
     var page by remember(state.snapshot?.eventCursor) { mutableStateOf(HomePage.THREADS) }
     var selectedThread by remember(state.snapshot?.eventCursor) {
@@ -112,6 +122,7 @@ private fun HomeScreen(
                             onClick = { page = HomePage.NEW_TASK },
                             enabled = state.snapshot?.capabilities?.startTask == true,
                         ) { Text("新任务") }
+                        TextButton(onClick = onOpenLogs) { Text("日志") }
                     }
                 },
             )
