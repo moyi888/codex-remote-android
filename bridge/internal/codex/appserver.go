@@ -192,7 +192,7 @@ func (a *AppServerAdapter) StartTask(ctx context.Context, request StartTaskReque
 		"cwd":            project.Path,
 		"model":          optionalString(request.Model),
 		"approvalPolicy": "never",
-		"sandbox":        "dangerFullAccess",
+		"sandbox":        "danger-full-access",
 	}, &threadResponse); err != nil {
 		return domain.ThreadSummary{}, err
 	}
@@ -223,7 +223,7 @@ func (a *AppServerAdapter) SendTurn(ctx context.Context, request SendTurnRequest
 	if err := a.rpc.Call(ctx, "thread/resume", map[string]any{
 		"threadId":       request.ThreadID,
 		"approvalPolicy": "never",
-		"sandbox":        "dangerFullAccess",
+		"sandbox":        "danger-full-access",
 	}, &resumed); err != nil {
 		return err
 	}

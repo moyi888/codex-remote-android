@@ -44,7 +44,7 @@ func TestAppServerAdapterResumesThreadBeforeSendingTurn(t *testing.T) {
 		t.Fatalf("unexpected calls: %+v", rpc.calls)
 	}
 	resumeParams, ok := rpc.calls[0].params.(map[string]any)
-	if !ok || resumeParams["approvalPolicy"] != "never" || resumeParams["sandbox"] != "dangerFullAccess" {
+	if !ok || resumeParams["approvalPolicy"] != "never" || resumeParams["sandbox"] != "danger-full-access" {
 		t.Fatalf("thread/resume must preserve full-access command policy: %#v", rpc.calls[0].params)
 	}
 }
@@ -68,7 +68,7 @@ func TestAppServerAdapterStartsThreadThenTurn(t *testing.T) {
 	if !ok {
 		t.Fatalf("unexpected thread/start params: %#v", rpc.calls[0].params)
 	}
-	if startParams["approvalPolicy"] != "never" || startParams["sandbox"] != "dangerFullAccess" {
+	if startParams["approvalPolicy"] != "never" || startParams["sandbox"] != "danger-full-access" {
 		t.Fatalf("thread/start must preserve full access without approvals: %#v", startParams)
 	}
 }
