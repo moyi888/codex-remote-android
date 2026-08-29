@@ -221,7 +221,9 @@ func (a *AppServerAdapter) StartTask(ctx context.Context, request StartTaskReque
 func (a *AppServerAdapter) SendTurn(ctx context.Context, request SendTurnRequest) error {
 	var resumed any
 	if err := a.rpc.Call(ctx, "thread/resume", map[string]any{
-		"threadId": request.ThreadID,
+		"threadId":       request.ThreadID,
+		"approvalPolicy": "never",
+		"sandbox":        "dangerFullAccess",
 	}, &resumed); err != nil {
 		return err
 	}

@@ -43,6 +43,10 @@ func TestAppServerAdapterResumesThreadBeforeSendingTurn(t *testing.T) {
 	if len(rpc.calls) != 2 || rpc.calls[0].method != "thread/resume" || rpc.calls[1].method != "turn/start" {
 		t.Fatalf("unexpected calls: %+v", rpc.calls)
 	}
+	resumeParams, ok := rpc.calls[0].params.(map[string]any)
+	if !ok || resumeParams["approvalPolicy"] != "never" || resumeParams["sandbox"] != "dangerFullAccess" {
+		t.Fatalf("thread/resume must preserve full-access command policy: %#v", rpc.calls[0].params)
+	}
 }
 
 func TestAppServerAdapterStartsThreadThenTurn(t *testing.T) {
