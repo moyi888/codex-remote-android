@@ -88,7 +88,7 @@ cd android
 
 ## Current limitations
 
-- The phone task detail screen currently shows a task summary and supports continuing the conversation; the complete message-history API is still in progress.
+- The phone task detail screen shows task history and supports continuing the conversation. When Codex Desktop is open on Windows, status, replies, and history are read from the same Desktop view; the local app-server is used as a fallback when Desktop tools are unavailable.
 - The APK is currently an installable debug-signed build. Production signing and Play distribution are not configured.
 - Third-party login and browser authorization must still be completed on the PC through Sunlogin or another remote desktop tool.
 

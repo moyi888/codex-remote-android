@@ -34,7 +34,14 @@ func TestAppToolsPipeCallerConfirmsTargetBeforeSelection(t *testing.T) {
 			wantOK:     true,
 		},
 		{
-			name:       "wrong window without target",
+			name:       "target outside recent catalog remains readable",
+			catalog:    `{"threads":[{"id":"other"}],"pinnedThreads":[]}`,
+			readResult: `{"thread":{"id":"target"}}`,
+			wantCaller: "other",
+			wantOK:     true,
+		},
+		{
+			name:       "wrong window cannot read target",
 			catalog:    `{"threads":[{"id":"other"}],"pinnedThreads":[]}`,
 			readResult: "",
 			wantOK:     false,

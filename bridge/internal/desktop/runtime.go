@@ -82,9 +82,11 @@ func (f *HTTPBridgeFactory) Start(ctx context.Context, config BridgeConfig) (Bri
 		return nil, fmt.Errorf("open bridge database")
 	}
 	pairing := auth.NewPairingService(database, f.now)
-	adapter := codex.NewHistoryAppServerAdapter(transport)
+	baseAdapter := codex.NewHistoryAppServerAdapter(transport)
+	desktopTools := codex.NewDesktopAppToolsClient()
+	adapter := codex.NewDesktopReadAdapter(baseAdapter, desktopTools)
 	broker := events.NewBroker(database, f.now)
-	desktopCommands := codex.NewDesktopCommandAdapter(adapter, codex.NewDesktopAppToolsClient())
+	desktopCommands := codex.NewDesktopCommandAdapter(adapter, desktopTools)
 	commandService := commands.NewService(database, codex.NewCommandExecutor(desktopCommands))
 	apiServer := api.NewServer(pairing, adapter, api.WithCommands(commandService), api.WithEvents(broker))
 	httpServer := &http.Server{

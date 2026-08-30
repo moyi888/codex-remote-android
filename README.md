@@ -88,7 +88,7 @@ cd android
 
 ## 当前限制
 
-- 手机详情页当前显示任务摘要并可继续对话；完整历史消息 API 尚在实现中。
+- 手机详情页显示任务历史并可继续对话；Windows 上打开 Codex Desktop 时，状态、回复和历史优先读取桌面端同一视图，桌面端不可用时回退到本地 app-server。
 - Windows Codex Desktop 打开时，Bridge 会自动发现桌面端的官方 `codex-app-tools` 本地通道，并通过 `send_message_to_thread` 向已有任务发送消息，避免独立 app-server 与桌面端争用同一线程的 writer。Codex Desktop 未打开或该通道不可用时才回退到独立 app-server；回退模式下若桌面端仍占用线程，诊断日志会明确显示 `already has an active writer`。
 - APK 暂为可安装的 debug 签名构建；正式签名与 Play 分发尚未配置。
 - 第三方登录和浏览器授权必须通过向日葵等远控工具在电脑上完成。

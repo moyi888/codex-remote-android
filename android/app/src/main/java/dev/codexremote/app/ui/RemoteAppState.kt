@@ -15,6 +15,7 @@ data class RemoteAppState(
     val snapshot: Snapshot? = null,
     val newTask: NewTaskState = NewTaskState(),
     val histories: Map<String, ThreadHistory> = emptyMap(),
+    val pendingUserMessages: Map<String, List<dev.codexremote.app.protocol.ConversationEntry>> = emptyMap(),
 ) {
     fun withSnapshot(value: Snapshot): RemoteAppState {
         val orderedSnapshot = value.copy(
@@ -45,7 +46,26 @@ data class RemoteAppState(
             (history.entries + previous.entries).forEach { entry -> entriesById.putIfAbsent(entry.id, entry) }
             history.copy(entries = entriesById.values.toList())
         } else history
-        return copy(histories = histories + (threadId to merged))
+        val pending = pendingUserMessages[threadId].orEmpty()
+        val confirmedTexts = merged.entries.filter { it.kind == "用户" }.map { it.text }.toSet()
+        val remainingPending = pending.filterNot { it.text in confirmedTexts }
+        val knownIds = merged.entries.map { it.id }.toSet()
+        val visible = merged.copy(entries = merged.entries + remainingPending.filter { it.id !in knownIds })
+        return copy(
+            histories = histories + (threadId to visible),
+            pendingUserMessages = pendingUserMessages + (threadId to remainingPending),
+        )
+    }
+
+    fun withPendingUserMessage(threadId: String, entry: dev.codexremote.app.protocol.ConversationEntry): RemoteAppState {
+        val pending = pendingUserMessages[threadId].orEmpty()
+        val existing = histories[threadId] ?: ThreadHistory()
+        if (existing.entries.any { it.id == entry.id || (it.kind == "用户" && it.text == entry.text) }) return this
+        val nextPending = (pending + entry).distinctBy { it.id }
+        return copy(
+            histories = histories + (threadId to existing.copy(entries = existing.entries + entry)),
+            pendingUserMessages = pendingUserMessages + (threadId to nextPending),
+        )
     }
 
     fun selectProject(projectId: String): RemoteAppState {
@@ -83,4 +103,14 @@ data class RemoteAppState(
         reasoningId?.takeIf { selected ->
             model?.reasoningOptions?.any { it.id == selected } == true
         }
+}
+
+internal class ActiveThreadTracker {
+    private var threadId: String? = null
+
+    fun open(value: String) { threadId = value }
+
+    fun close() { threadId = null }
+
+    fun current(): String? = threadId
 }

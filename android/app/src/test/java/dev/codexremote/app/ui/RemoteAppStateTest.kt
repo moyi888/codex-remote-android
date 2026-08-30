@@ -12,9 +12,56 @@ import dev.codexremote.app.protocol.ThreadState
 import dev.codexremote.app.protocol.ThreadSummary
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RemoteAppStateTest {
+    @Test
+    fun pendingUserMessageAppearsImmediatelyAndSurvivesStaleRefresh() {
+        val pending = ConversationEntry("pending-1", "用户", "刚发送的消息")
+        val state = RemoteAppState()
+            .withHistory("thread-1", ThreadHistory(listOf(ConversationEntry("old", "Codex", "旧回复"))))
+            .withPendingUserMessage("thread-1", pending)
+
+        val staleRefresh = state.withHistory(
+            "thread-1",
+            ThreadHistory(listOf(ConversationEntry("old", "Codex", "旧回复"))),
+        )
+
+        assertEquals(listOf("旧回复", "刚发送的消息"), staleRefresh.histories["thread-1"]?.entries?.map { it.text })
+        assertEquals(listOf(pending), staleRefresh.pendingUserMessages["thread-1"])
+    }
+
+    @Test
+    fun confirmedUserMessageReplacesPendingCopyAndNewReplyFollowsIt() {
+        val state = RemoteAppState()
+            .withPendingUserMessage("thread-1", ConversationEntry("pending-1", "用户", "继续执行"))
+
+        val refreshed = state.withHistory(
+            "thread-1",
+            ThreadHistory(
+                listOf(
+                    ConversationEntry("server-user", "用户", "继续执行"),
+                    ConversationEntry("server-agent", "Codex", "已经完成"),
+                ),
+            ),
+        )
+
+        assertEquals(listOf("server-user", "server-agent"), refreshed.histories["thread-1"]?.entries?.map { it.id })
+        assertTrue(refreshed.pendingUserMessages["thread-1"].isNullOrEmpty())
+    }
+
+    @Test
+    fun activeThreadTrackerOnlyReturnsCurrentlyOpenDetail() {
+        val tracker = ActiveThreadTracker()
+
+        tracker.open("thread-1")
+        assertEquals("thread-1", tracker.current())
+
+        tracker.close()
+        assertNull(tracker.current())
+    }
+
     @Test
     fun appendsPagedHistoryWithoutDroppingExistingEntries() {
         val initial = RemoteAppState().withHistory(

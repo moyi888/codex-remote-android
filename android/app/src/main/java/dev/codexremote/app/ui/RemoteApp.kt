@@ -56,6 +56,7 @@ fun RemoteApp(
     onOpenTailscale: () -> Unit,
     onRefresh: () -> Unit,
     onOpenThread: (String) -> Unit,
+    onCloseThread: () -> Unit,
     onLoadMoreThread: (String, String) -> Unit,
     onStartTask: (String, String, String?, String?) -> Unit,
     onSendTurn: (String, String) -> Unit,
@@ -84,6 +85,7 @@ fun RemoteApp(
             deliveryMessage = deliveryMessage,
             onRefresh = onRefresh,
             onOpenThread = onOpenThread,
+            onCloseThread = onCloseThread,
             onLoadMoreThread = onLoadMoreThread,
             onStartTask = onStartTask,
             onSendTurn = onSendTurn,
@@ -104,6 +106,7 @@ private fun HomeScreen(
     deliveryMessage: String?,
     onRefresh: () -> Unit,
     onOpenThread: (String) -> Unit,
+    onCloseThread: () -> Unit,
     onLoadMoreThread: (String, String) -> Unit,
     onStartTask: (String, String, String?, String?) -> Unit,
     onSendTurn: (String, String) -> Unit,
@@ -127,7 +130,7 @@ private fun HomeScreen(
                 },
                 navigationIcon = {
                     if (page != HomePage.THREADS) {
-                        TextButton(onClick = { page = HomePage.THREADS }) { Text("返回") }
+                        TextButton(onClick = { page = HomePage.THREADS; onCloseThread() }) { Text("返回") }
                     }
                 },
                 actions = {

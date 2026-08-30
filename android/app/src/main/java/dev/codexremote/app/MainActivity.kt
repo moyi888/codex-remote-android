@@ -26,6 +26,7 @@ import dev.codexremote.app.ui.PendingPairingInvitation
 import dev.codexremote.app.ui.RemoteApp
 import dev.codexremote.app.ui.RemoteAppController
 import dev.codexremote.app.ui.RemoteAppState
+import dev.codexremote.app.protocol.ConversationEntry
 import dev.codexremote.app.diagnostics.DiagnosticLogs
 import java.time.Instant
 import java.util.UUID
@@ -49,6 +50,7 @@ class MainActivity : ComponentActivity() {
     private var busy by mutableStateOf(false)
     private var refreshing by mutableStateOf(false)
     private var deliveryMessage by mutableStateOf<String?>(null)
+    private var activeThreadId: String? = null
     private var cameraPermission by mutableStateOf(CameraPermission.REQUESTABLE)
     private val logs = DiagnosticLogs.instance
     private val pendingPairingInvitation = PendingPairingInvitation()
@@ -86,6 +88,7 @@ class MainActivity : ComponentActivity() {
                     onOpenTailscale = ::openTailscale,
                     onRefresh = ::resumeConnection,
                     onOpenThread = ::loadThread,
+                    onCloseThread = ::closeThread,
                     onLoadMoreThread = ::loadMoreThread,
                     onStartTask = { projectId, prompt, modelId, reasoningId ->
                         executeCommand {
@@ -93,11 +96,21 @@ class MainActivity : ComponentActivity() {
                         }
                     },
                     onSendTurn = { threadId, prompt ->
-                        executeCommand { controller.sendTurn(threadId, prompt) }
+                        executeCommand({ controller.sendTurn(threadId, prompt) }) {
+                            appState = appState.withPendingUserMessage(
+                                threadId,
+                                ConversationEntry(UUID.randomUUID().toString(), "用户", prompt),
+                            )
+                        }
                     },
                     logs = logs,
                     onSteerTurn = { threadId, turnId, prompt ->
-                        executeCommand { controller.steerTurn(threadId, turnId, prompt) }
+                        executeCommand({ controller.steerTurn(threadId, turnId, prompt) }) {
+                            appState = appState.withPendingUserMessage(
+                                threadId,
+                                ConversationEntry(UUID.randomUUID().toString(), "用户", prompt),
+                            )
+                        }
                     },
                     onInterruptTurn = { threadId, turnId ->
                         executeCommand { controller.interruptTurn(threadId, turnId) }
@@ -138,11 +151,20 @@ class MainActivity : ComponentActivity() {
     private fun refreshSnapshot() {
         if (busy || refreshing || loadResult !is LoadResult.Ready) return
         refreshing = true
+        val threadId = activeThreadId
         worker.execute {
             try {
                 val snapshot = controller.refreshSnapshot()
+                val history = threadId?.let {
+                    runCatching { controller.loadThreadHistory(it) }
+                        .onFailure { error -> logs.error("history", "background refresh failed thread=${it.take(8)}", error) }
+                        .getOrNull()
+                }
                 postToActiveActivity {
                     appState = appState.withSnapshot(snapshot)
+                    if (threadId != null && threadId == activeThreadId && history != null) {
+                        appState = appState.withHistory(threadId, history)
+                    }
                     refreshing = false
                 }
             } catch (error: Exception) {
@@ -163,7 +185,10 @@ class MainActivity : ComponentActivity() {
             postToActiveActivity {
                 loadResult = result
                 if (result is LoadResult.Ready) {
-                    appState = result.state.copy(histories = appState.histories)
+                    appState = result.state.copy(
+                        histories = appState.histories,
+                        pendingUserMessages = appState.pendingUserMessages,
+                    )
                 }
                 busy = false
                 pendingPairingInvitation.takeAfterLoad()?.let(::pair)
@@ -172,7 +197,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun loadThread(threadId: String) {
+        activeThreadId = threadId
         executeHistory(threadId, null, append = false)
+    }
+
+    private fun closeThread() {
+        activeThreadId = null
     }
 
     private fun loadMoreThread(threadId: String, cursor: String) {
@@ -200,7 +230,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun executeCommand(action: () -> CommandDelivery) {
+    private fun executeCommand(action: () -> CommandDelivery, onSent: (() -> Unit)? = null) {
         if (busy) return
         busy = true
         deliveryMessage = null
@@ -208,6 +238,7 @@ class MainActivity : ComponentActivity() {
             val result = action()
             postToActiveActivity {
                 deliveryMessage = result.userMessage()
+                if (result == CommandDelivery.Sent) onSent?.invoke()
                 if (result == CommandDelivery.AuthenticationRequired) {
                     loadResult = LoadResult.Unpaired
                 }

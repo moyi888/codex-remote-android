@@ -326,7 +326,7 @@ func runServe(options serveOptions) error {
 			return err
 		}
 		defer appServer.Close()
-		adapter = realAdapter
+		adapter = codex.NewDesktopReadAdapter(realAdapter, codex.NewDesktopAppToolsClient())
 	}
 	runtime, err := newRuntime(options.data, adapter, commandAdapterForServe(adapter, options.fake))
 	if err != nil {
