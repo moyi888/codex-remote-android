@@ -107,6 +107,9 @@ func (a *DesktopReadAdapter) ListThreadTurns(ctx context.Context, threadID, curs
 	}
 	var root struct {
 		Turns []json.RawMessage `json:"turns"`
+		Thread struct {
+			Turns []json.RawMessage `json:"turns"`
+		} `json:"thread"`
 		Page  struct {
 			NextCursor string `json:"nextCursor"`
 		} `json:"page"`
@@ -114,6 +117,9 @@ func (a *DesktopReadAdapter) ListThreadTurns(ctx context.Context, threadID, curs
 	}
 	if err := json.Unmarshal(response, &root); err != nil {
 		return nil, fmt.Errorf("decode Codex Desktop history: %w", err)
+	}
+	if len(root.Turns) == 0 {
+		root.Turns = root.Thread.Turns
 	}
 	nextCursor := root.NextCursor
 	if nextCursor == "" {
