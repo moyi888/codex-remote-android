@@ -25,6 +25,18 @@ type rpcResponse struct {
 	} `json:"error,omitempty"`
 }
 
+// RPCError preserves the machine-readable error returned by app-server so
+// callers can classify conflicts (for example an active thread writer)
+// without parsing a lossy generic error string.
+type RPCError struct {
+	Code    int
+	Message string
+}
+
+func (e *RPCError) Error() string {
+	return fmt.Sprintf("app-server error %d: %s", e.Code, e.Message)
+}
+
 type rpcMessage struct {
 	ID     *uint64         `json:"id,omitempty"`
 	Method string          `json:"method,omitempty"`
@@ -188,7 +200,7 @@ func (p *RPCProcess) Call(ctx context.Context, method string, params, result any
 				continue
 			}
 			if scanned.message.Error != nil {
-				return fmt.Errorf("app-server error %d: %s", scanned.message.Error.Code, scanned.message.Error.Message)
+				return &RPCError{Code: scanned.message.Error.Code, Message: scanned.message.Error.Message}
 			}
 			return json.Unmarshal(scanned.message.Result, result)
 		}

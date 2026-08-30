@@ -250,6 +250,18 @@ func (s *Server) command(writer http.ResponseWriter, request *http.Request) {
 	command.DeviceID = deviceID
 	result, err := s.commands.Handle(request.Context(), command)
 	if err != nil {
+		if rpcErr := new(codex.RPCError); errors.As(err, &rpcErr) {
+			status := http.StatusBadRequest
+			if strings.Contains(strings.ToLower(rpcErr.Message), "active writer") {
+				status = http.StatusConflict
+			}
+			writeJSON(writer, status, map[string]any{
+				"error":  "command rejected",
+				"detail": rpcErr.Message,
+				"code":   rpcErr.Code,
+			})
+			return
+		}
 		writeError(writer, http.StatusBadRequest, "command rejected")
 		return
 	}

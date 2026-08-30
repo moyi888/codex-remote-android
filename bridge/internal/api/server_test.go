@@ -20,6 +20,12 @@ import (
 	"github.com/moyi888/codex-remote-android/bridge/internal/store"
 )
 
+type rpcErrorExecutor struct{}
+
+func (rpcErrorExecutor) Execute(context.Context, domain.CommandEnvelope) (json.RawMessage, error) {
+	return nil, &codex.RPCError{Code: -32600, Message: "thread abc already has an active writer"}
+}
+
 func TestSnapshotRequiresAuthenticationAndPairingGrantsAccess(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "bridge.db"))
 	if err != nil {
@@ -401,6 +407,43 @@ func TestCommandEndpointStartsTaskOnce(t *testing.T) {
 	threads, _ := adapter.ListThreads(t.Context())
 	if len(threads) != 1 {
 		t.Fatalf("threads = %d, want 1", len(threads))
+	}
+}
+
+func TestCommandEndpointReturnsActiveWriterConflictDetail(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "bridge.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	pairing := auth.NewPairingService(db, time.Now)
+	token, _ := pairing.Issue(5 * time.Minute)
+	service := commands.NewService(db, rpcErrorExecutor{})
+	server := httptest.NewServer(NewServer(pairing, codex.NewFakeAdapter(), WithCommands(service)).Handler())
+	defer server.Close()
+	credential := exchangeCredential(t, server.URL, token)
+	body := []byte(`{"protocolVersion":1,"requestId":"r1","deviceId":"phone-1","idempotencyKey":"i1","type":"thread.send","payload":{"threadId":"abc","prompt":"继续"}}`)
+	request, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/commands", bytes.NewReader(body))
+	request.Header.Set("Authorization", "Device phone-1:"+credential)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", response.StatusCode, http.StatusConflict)
+	}
+	var payload struct {
+		Error  string `json:"error"`
+		Detail string `json:"detail"`
+		Code   int    `json:"code"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Error != "command rejected" || payload.Detail == "" || payload.Code != -32600 {
+		t.Fatalf("payload = %+v", payload)
 	}
 }
 

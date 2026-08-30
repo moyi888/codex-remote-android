@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -169,6 +170,22 @@ func TestRPCProcessReportsUnexpectedExit(t *testing.T) {
 		t.Fatal("未收到子进程退出信号")
 	}
 	_ = process.Close()
+}
+
+func TestRPCProcessPreservesStructuredServerError(t *testing.T) {
+	process, err := StartRPCProcess(context.Background(), os.Args[0], []string{"-test.run=TestRPCProcessErrorHelper", "--"}, []string{"CODEX_REMOTE_ERROR_HELPER=1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer process.Close()
+	err = process.Call(context.Background(), "thread/resume", nil, &struct{}{})
+	var rpcErr *RPCError
+	if !errors.As(err, &rpcErr) {
+		t.Fatalf("error = %T %v, want *RPCError", err, err)
+	}
+	if rpcErr.Code != -32600 || rpcErr.Message != "thread abc already has an active writer" {
+		t.Fatalf("rpc error = %+v", rpcErr)
+	}
 }
 
 func TestRPCProcessCloseIsIdempotent(t *testing.T) {
@@ -351,4 +368,18 @@ func TestRPCProcessWaitHelper(t *testing.T) {
 		return
 	}
 	_, _ = io.Copy(io.Discard, os.Stdin)
+}
+
+func TestRPCProcessErrorHelper(t *testing.T) {
+	if os.Getenv("CODEX_REMOTE_ERROR_HELPER") != "1" {
+		return
+	}
+	var request struct {
+		ID uint64 `json:"id"`
+	}
+	if err := json.NewDecoder(os.Stdin).Decode(&request); err != nil {
+		os.Exit(2)
+	}
+	fmt.Printf(`{"id":%d,"error":{"code":-32600,"message":"thread abc already has an active writer"}}`+"\n", request.ID)
+	select {}
 }

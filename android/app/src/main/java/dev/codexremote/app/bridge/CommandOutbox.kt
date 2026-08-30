@@ -147,7 +147,9 @@ class CommandOutbox(
         DEVICE_LOCKS.withLock(deviceId, action)
 
     private companion object {
-        val RETRYABLE_STATUS_CODES = setOf(408, 409, 425, 429)
+        // 409 is a deterministic command conflict (for example Codex's
+        // active-writer lock), not a transient network failure.
+        val RETRYABLE_STATUS_CODES = setOf(408, 425, 429)
         val DEVICE_LOCKS = DeviceLockRegistry()
     }
 }

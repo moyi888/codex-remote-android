@@ -21,6 +21,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import java.util.concurrent.TimeUnit
+import kotlinx.serialization.json.jsonPrimitive
 
 internal fun bridgeHttpOkHttpClient(okHttpClient: OkHttpClient = OkHttpClient()): OkHttpClient =
     okHttpClient.newBuilder()
@@ -143,9 +144,19 @@ class BridgeHttpClient(
                 val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000
                 logs.info("http", "response ${request.method} ${request.url.encodedPath} HTTP ${response.code} ${elapsedMs}ms")
                 if (!response.isSuccessful) {
+                    val responseBody = response.body.string()
+                    val detail = runCatching {
+                        json.parseToJsonElement(responseBody).jsonObject["detail"]?.jsonPrimitive?.content
+                    }.getOrNull()
+                    val safeDetail = detail
+                        ?.takeIf { it.contains("active writer", ignoreCase = true) }
+                        ?.take(240)
+                    if (safeDetail != null) {
+                        logs.warn("http", "Bridge rejected command: $safeDetail")
+                    }
                     throw BridgeApiException(
                         statusCode = response.code,
-                        safeMessage = "Bridge API request failed with HTTP ${response.code}",
+                        safeMessage = safeDetail ?: "Bridge API request failed with HTTP ${response.code}",
                     )
                 }
                 try {

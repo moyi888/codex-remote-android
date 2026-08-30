@@ -74,6 +74,23 @@ class CommandOutboxTest {
     }
 
     @Test
+    fun activeWriterConflictIsRejectedWithoutRetrying() {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(409)
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"error":"command rejected","detail":"thread abc already has an active writer"}"""),
+        )
+        val result = outbox.sendOrQueue(command("active-writer"))
+
+        assertTrue(result is SendOrQueueResult.Attempted)
+        assertTrue((result as SendOrQueueResult.Attempted).outcome is CommandOutboxResult.Rejected)
+        assertEquals(409, (result.outcome as CommandOutboxResult.Rejected).statusCode)
+        assertEquals(1, server.requestCount)
+        assertTrue(queue.list().isEmpty())
+    }
+
+    @Test
     fun flushSendsInFifoOrderAndStopsAtFirstFailure() {
         queue.enqueue(command("first"))
         queue.enqueue(command("second"))

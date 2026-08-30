@@ -192,6 +192,31 @@ class BridgeHttpClientTest {
     }
 
     @Test
+    fun activeWriterConflictPreservesSafeServerDetail() {
+        val logs = DiagnosticLogStore()
+        val loggedClient = BridgeHttpClient(logs = logs)
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(409)
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"error":"command rejected","detail":"thread abc already has an active writer","code":-32600}"""),
+        )
+
+        try {
+            loggedClient.sendCommand(
+                baseUrl(),
+                DeviceCredential(1, "phone-1", "credential-1"),
+                CommandEnvelope(1, "request-1", "phone-1", "idempotency-1", "thread.send", buildJsonObject { put("prompt", "继续") }, "2026-08-25T12:00:00Z"),
+            )
+            fail("active writer response must throw")
+        } catch (error: BridgeApiException) {
+            assertEquals(409, error.statusCode)
+            assertTrue(error.safeMessage.contains("active writer"))
+            assertTrue(logs.export().contains("active writer"))
+        }
+    }
+
+    @Test
     fun pairingFailureDoesNotExposeTokenOrRawResponse() {
         val tokenSecret = "token-do-not-leak"
         val responseSecret = "response-do-not-leak"
