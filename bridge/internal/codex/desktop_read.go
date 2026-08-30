@@ -106,11 +106,11 @@ func (a *DesktopReadAdapter) ListThreadTurns(ctx context.Context, threadID, curs
 		return nil, err
 	}
 	var root struct {
-		Turns []json.RawMessage `json:"turns"`
+		Turns  []json.RawMessage `json:"turns"`
 		Thread struct {
 			Turns []json.RawMessage `json:"turns"`
 		} `json:"thread"`
-		Page  struct {
+		Page struct {
 			NextCursor string `json:"nextCursor"`
 		} `json:"page"`
 		NextCursor string `json:"nextCursor"`
