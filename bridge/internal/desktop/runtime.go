@@ -84,7 +84,8 @@ func (f *HTTPBridgeFactory) Start(ctx context.Context, config BridgeConfig) (Bri
 	pairing := auth.NewPairingService(database, f.now)
 	adapter := codex.NewHistoryAppServerAdapter(transport)
 	broker := events.NewBroker(database, f.now)
-	commandService := commands.NewService(database, codex.NewCommandExecutor(adapter))
+	desktopCommands := codex.NewDesktopCommandAdapter(adapter, codex.NewDesktopAppToolsClient())
+	commandService := commands.NewService(database, codex.NewCommandExecutor(desktopCommands))
 	apiServer := api.NewServer(pairing, adapter, api.WithCommands(commandService), api.WithEvents(broker))
 	httpServer := &http.Server{
 		Handler:           apiServer.Handler(),

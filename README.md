@@ -89,7 +89,7 @@ cd android
 ## 当前限制
 
 - 手机详情页当前显示任务摘要并可继续对话；完整历史消息 API 尚在实现中。
-- Windows 桌面 Codex 正在执行某个任务时，该线程会被桌面 app-server 独占写入；此时手机发送会返回 HTTP 409，并在诊断日志中显示 `already has an active writer`。等待桌面任务结束后重试即可，Bridge 不会丢失或无限重试这条命令。
+- Windows Codex Desktop 打开时，Bridge 会自动发现桌面端的官方 `codex-app-tools` 本地通道，并通过 `send_message_to_thread` 向已有任务发送消息，避免独立 app-server 与桌面端争用同一线程的 writer。Codex Desktop 未打开或该通道不可用时才回退到独立 app-server；回退模式下若桌面端仍占用线程，诊断日志会明确显示 `already has an active writer`。
 - APK 暂为可安装的 debug 签名构建；正式签名与 Play 分发尚未配置。
 - 第三方登录和浏览器授权必须通过向日葵等远控工具在电脑上完成。
 

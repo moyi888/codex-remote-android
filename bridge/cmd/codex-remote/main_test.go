@@ -102,7 +102,8 @@ func TestRunApplicationKeepsServeAndVersionModes(t *testing.T) {
 }
 
 func TestNewRuntimeExposesHealthAndPairingToken(t *testing.T) {
-	runtime, err := newRuntime(filepath.Join(t.TempDir(), "bridge.db"), codex.NewFakeAdapter())
+	adapter := codex.NewFakeAdapter()
+	runtime, err := newRuntime(filepath.Join(t.TempDir(), "bridge.db"), adapter, adapter)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,6 +116,16 @@ func TestNewRuntimeExposesHealthAndPairingToken(t *testing.T) {
 	runtime.handler.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
 		t.Fatalf("health status = %d", response.Code)
+	}
+}
+
+func TestRealServeUsesDesktopCommandAdapter(t *testing.T) {
+	adapter := codex.NewFakeAdapter()
+	if got := commandAdapterForServe(adapter, true); got != adapter {
+		t.Fatalf("fake adapter was wrapped: %T", got)
+	}
+	if _, ok := commandAdapterForServe(adapter, false).(*codex.DesktopCommandAdapter); !ok {
+		t.Fatalf("real serve command adapter = %T", commandAdapterForServe(adapter, false))
 	}
 }
 

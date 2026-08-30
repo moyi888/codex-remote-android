@@ -264,7 +264,7 @@ type bridgeRuntime struct {
 	store        *store.Store
 }
 
-func newRuntime(databasePath string, adapter codex.Adapter) (*bridgeRuntime, error) {
+func newRuntime(databasePath string, adapter, commandAdapter codex.Adapter) (*bridgeRuntime, error) {
 	database, err := store.Open(databasePath)
 	if err != nil {
 		return nil, err
@@ -276,12 +276,19 @@ func newRuntime(databasePath string, adapter codex.Adapter) (*bridgeRuntime, err
 		return nil, err
 	}
 	broker := events.NewBroker(database, time.Now)
-	commandService := commands.NewService(database, codex.NewCommandExecutor(adapter))
+	commandService := commands.NewService(database, codex.NewCommandExecutor(commandAdapter))
 	server := api.NewServer(pairing, adapter, api.WithCommands(commandService), api.WithEvents(broker))
 	return &bridgeRuntime{handler: server.Handler(), pairingToken: token, store: database}, nil
 }
 
 func (r *bridgeRuntime) Close() error { return r.store.Close() }
+
+func commandAdapterForServe(adapter codex.Adapter, fake bool) codex.Adapter {
+	if fake {
+		return adapter
+	}
+	return codex.NewDesktopCommandAdapter(adapter, codex.NewDesktopAppToolsClient())
+}
 
 func pairingInvitationURL(advertiseBaseURL, token string) (string, error) {
 	invitation := url.URL{Scheme: "codex-remote", Host: "pair"}
@@ -321,7 +328,7 @@ func runServe(options serveOptions) error {
 		defer appServer.Close()
 		adapter = realAdapter
 	}
-	runtime, err := newRuntime(options.data, adapter)
+	runtime, err := newRuntime(options.data, adapter, commandAdapterForServe(adapter, options.fake))
 	if err != nil {
 		return err
 	}
