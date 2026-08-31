@@ -17,6 +17,16 @@ import org.junit.Test
 
 class RemoteAppStateTest {
     @Test
+    fun historyRefreshPolicySkipsUnchangedCompletedThread() {
+        val thread = thread("thread-1", "2026-08-29T10:00:00Z")
+
+        assertTrue(!shouldRefreshThreadHistory(thread, thread, hasHistory = true))
+        assertTrue(!shouldRefreshThreadHistory(thread, null, hasHistory = false))
+        assertTrue(shouldRefreshThreadHistory(thread, thread.copy(state = ThreadState.RUNNING), hasHistory = true))
+        assertTrue(shouldRefreshThreadHistory(thread, thread.copy(updatedAt = "2026-08-29T10:01:00Z"), hasHistory = true))
+    }
+
+    @Test
     fun pendingUserMessageAppearsImmediatelyAndSurvivesStaleRefresh() {
         val pending = ConversationEntry("pending-1", "用户", "刚发送的消息")
         val state = RemoteAppState()

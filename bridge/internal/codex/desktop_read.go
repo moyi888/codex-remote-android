@@ -23,6 +23,12 @@ type DesktopReadAdapter struct {
 	tools AppToolsCaller
 }
 
+const (
+	// Keep mobile detail reads small enough to finish before the app-tools deadline.
+	desktopHistoryPageLimit       = 20
+	desktopHistoryOutputCharLimit = 12000
+)
+
 func NewDesktopReadAdapter(base Adapter, tools AppToolsCaller) *DesktopReadAdapter {
 	reader, _ := base.(threadHistoryReader)
 	return &DesktopReadAdapter{Adapter: base, base: reader, tools: tools}
@@ -93,7 +99,16 @@ func (a *DesktopReadAdapter) ReadThread(ctx context.Context, threadID string, in
 }
 
 func (a *DesktopReadAdapter) ListThreadTurns(ctx context.Context, threadID, cursor string, limit int) (json.RawMessage, error) {
-	arguments := map[string]any{"threadId": threadID, "turnLimit": limit}
+	pageLimit := limit
+	if pageLimit <= 0 || pageLimit > desktopHistoryPageLimit {
+		pageLimit = desktopHistoryPageLimit
+	}
+	arguments := map[string]any{
+		"threadId":              threadID,
+		"turnLimit":             pageLimit,
+		"includeOutputs":        false,
+		"maxOutputCharsPerItem": desktopHistoryOutputCharLimit,
+	}
 	if cursor != "" {
 		arguments["cursor"] = cursor
 	}
@@ -101,7 +116,7 @@ func (a *DesktopReadAdapter) ListThreadTurns(ctx context.Context, threadID, curs
 	err := a.tools.CallTool(ctx, threadID, "read_thread", arguments, &response)
 	if err != nil {
 		if a.base != nil {
-			return a.base.ListThreadTurns(ctx, threadID, cursor, limit)
+			return a.base.ListThreadTurns(ctx, threadID, cursor, pageLimit)
 		}
 		return nil, err
 	}

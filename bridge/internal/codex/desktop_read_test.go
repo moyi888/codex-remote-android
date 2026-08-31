@@ -36,9 +36,15 @@ func (b *desktopReadBase) ListThreadTurns(context.Context, string, string, int) 
 type desktopReadTools struct {
 	responses map[string]json.RawMessage
 	errors    map[string]error
+	arguments map[string]any
 }
 
-func (t desktopReadTools) CallTool(_ context.Context, _ string, tool string, _ any, result any) error {
+func (t desktopReadTools) CallTool(_ context.Context, _ string, tool string, arguments any, result any) error {
+	if t.arguments != nil {
+		if value, ok := arguments.(map[string]any); ok {
+			t.arguments[tool] = value
+		}
+	}
 	if err := t.errors[tool]; err != nil {
 		return err
 	}
@@ -47,6 +53,32 @@ func (t desktopReadTools) CallTool(_ context.Context, _ string, tool string, _ a
 		return errors.New("unexpected tool: " + tool)
 	}
 	return json.Unmarshal(payload, result)
+}
+
+func TestDesktopReadAdapterBoundsHistoryPayload(t *testing.T) {
+	tools := desktopReadTools{
+		responses: map[string]json.RawMessage{
+			"read_thread": json.RawMessage(`{"turns":[]}`),
+		},
+		arguments: map[string]any{},
+	}
+
+	if _, err := NewDesktopReadAdapter(&desktopReadBase{}, tools).ListThreadTurns(context.Background(), "target", "", 50); err != nil {
+		t.Fatal(err)
+	}
+	arguments, ok := tools.arguments["read_thread"].(map[string]any)
+	if !ok {
+		t.Fatalf("captured arguments = %#v", tools.arguments)
+	}
+	if arguments["turnLimit"] != 20 {
+		t.Fatalf("turnLimit = %#v, want 20", arguments["turnLimit"])
+	}
+	if arguments["includeOutputs"] != false {
+		t.Fatalf("includeOutputs = %#v, want false", arguments["includeOutputs"])
+	}
+	if arguments["maxOutputCharsPerItem"] != 12000 {
+		t.Fatalf("maxOutputCharsPerItem = %#v, want 12000", arguments["maxOutputCharsPerItem"])
+	}
 }
 
 func TestDesktopReadAdapterOverlaysRecentDesktopThreadsWithoutDroppingBaseCatalog(t *testing.T) {

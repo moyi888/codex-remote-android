@@ -80,7 +80,7 @@ class BridgeHttpClient(
         credential: DeviceCredential,
         threadId: String,
         cursor: String? = null,
-        limit: Int = 50,
+        limit: Int = 20,
     ): JsonObject {
         val encodedId = java.net.URLEncoder.encode(threadId, "UTF-8")
         val url = endpoint(baseUrl, "v1/threads/$encodedId/turns").newBuilder()

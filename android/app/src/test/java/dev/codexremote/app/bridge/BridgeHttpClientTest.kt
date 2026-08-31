@@ -170,6 +170,16 @@ class BridgeHttpClientTest {
     }
 
     @Test
+    fun threadTurnsUsesSmallDefaultPageSize() {
+        server.enqueue(jsonResponse("""{"turns":[],"nextCursor":null}"""))
+        val credential = DeviceCredential(1, "phone-1", "credential-1")
+
+        client.threadTurns(baseUrl(), credential, "thread-1")
+
+        assertEquals("/v1/threads/thread-1/turns?limit=20", server.takeRequest().path)
+    }
+
+    @Test
     fun unauthorizedExceptionDoesNotExposeSecretsOrRawResponse() {
         val credentialSecret = "credential-do-not-leak"
         val responseSecret = "response-do-not-leak"

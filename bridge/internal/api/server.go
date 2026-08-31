@@ -80,10 +80,10 @@ func (s *Server) threadTurns(writer http.ResponseWriter, request *http.Request) 
 		writeError(writer, http.StatusNotImplemented, "thread history is not supported")
 		return
 	}
-	limit := 50
+	limit := 20
 	if raw := request.URL.Query().Get("limit"); raw != "" {
 		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed < 1 || parsed > 100 {
+		if err != nil || parsed < 1 || parsed > 50 {
 			writeError(writer, http.StatusBadRequest, "invalid turn limit")
 			return
 		}

@@ -26,7 +26,7 @@ class AndroidRemoteAppGateway(
     private val clock: () -> String,
 ) : RemoteAppGateway {
     private companion object {
-        const val HISTORY_PAGE_SIZE = 50
+        const val HISTORY_PAGE_SIZE = 20
     }
     private val applicationContext = context.applicationContext
 

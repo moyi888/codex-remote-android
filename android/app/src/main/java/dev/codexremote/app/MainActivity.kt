@@ -26,6 +26,7 @@ import dev.codexremote.app.ui.PendingPairingInvitation
 import dev.codexremote.app.ui.RemoteApp
 import dev.codexremote.app.ui.RemoteAppController
 import dev.codexremote.app.ui.RemoteAppState
+import dev.codexremote.app.ui.shouldRefreshThreadHistory
 import dev.codexremote.app.protocol.ConversationEntry
 import dev.codexremote.app.diagnostics.DiagnosticLogs
 import java.time.Instant
@@ -36,6 +37,9 @@ import java.util.concurrent.Executors
 class MainActivity : ComponentActivity() {
     private val worker: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "remote-app-worker").apply { isDaemon = true }
+    }
+    private val refreshWorker: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "remote-app-refresh").apply { isDaemon = true }
     }
     private val mainHandler = Handler(Looper.getMainLooper())
     private val pollRunnable = object : Runnable {
@@ -51,6 +55,7 @@ class MainActivity : ComponentActivity() {
     private var refreshing by mutableStateOf(false)
     private var deliveryMessage by mutableStateOf<String?>(null)
     private var activeThreadId: String? = null
+    private var historyRevision = 0L
     private var cameraPermission by mutableStateOf(CameraPermission.REQUESTABLE)
     private val logs = DiagnosticLogs.instance
     private val pendingPairingInvitation = PendingPairingInvitation()
@@ -91,9 +96,9 @@ class MainActivity : ComponentActivity() {
                     onCloseThread = ::closeThread,
                     onLoadMoreThread = ::loadMoreThread,
                     onStartTask = { projectId, prompt, modelId, reasoningId ->
-                        executeCommand {
+                        executeCommand({
                             controller.startTask(projectId, prompt, modelId, reasoningId)
-                        }
+                        })
                     },
                     onSendTurn = { threadId, prompt ->
                         executeCommand({ controller.sendTurn(threadId, prompt) }) {
@@ -113,7 +118,7 @@ class MainActivity : ComponentActivity() {
                         }
                     },
                     onInterruptTurn = { threadId, turnId ->
-                        executeCommand { controller.interruptTurn(threadId, turnId) }
+                        executeCommand({ controller.interruptTurn(threadId, turnId) })
                     },
                 )
             }
@@ -136,6 +141,7 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         mainHandler.removeCallbacks(pollRunnable)
         worker.shutdownNow()
+        refreshWorker.shutdownNow()
         super.onDestroy()
     }
 
@@ -152,17 +158,26 @@ class MainActivity : ComponentActivity() {
         if (busy || refreshing || loadResult !is LoadResult.Ready) return
         refreshing = true
         val threadId = activeThreadId
-        worker.execute {
+        val previousSnapshot = appState.snapshot
+        val previousThread = threadId?.let { id -> previousSnapshot?.threads?.firstOrNull { it.id == id } }
+        val hadHistory = threadId?.let { appState.histories.containsKey(it) } ?: false
+        val capturedHistoryRevision = historyRevision
+        refreshWorker.execute {
             try {
                 val snapshot = controller.refreshSnapshot()
-                val history = threadId?.let {
+                val currentThread = threadId?.let { id -> snapshot.threads.firstOrNull { it.id == id } }
+                val history = threadId
+                    ?.takeIf { shouldRefreshThreadHistory(previousThread, currentThread, hadHistory) }
+                    ?.let {
                     runCatching { controller.loadThreadHistory(it) }
                         .onFailure { error -> logs.error("history", "background refresh failed thread=${it.take(8)}", error) }
                         .getOrNull()
                 }
                 postToActiveActivity {
                     appState = appState.withSnapshot(snapshot)
-                    if (threadId != null && threadId == activeThreadId && history != null) {
+                    if (threadId != null && threadId == activeThreadId &&
+                        capturedHistoryRevision == historyRevision && history != null
+                    ) {
                         appState = appState.withHistory(threadId, history)
                     }
                     refreshing = false
@@ -198,14 +213,17 @@ class MainActivity : ComponentActivity() {
 
     private fun loadThread(threadId: String) {
         activeThreadId = threadId
+        historyRevision++
         executeHistory(threadId, null, append = false)
     }
 
     private fun closeThread() {
         activeThreadId = null
+        historyRevision++
     }
 
     private fun loadMoreThread(threadId: String, cursor: String) {
+        historyRevision++
         executeHistory(threadId, cursor, append = true)
     }
 
