@@ -70,8 +70,8 @@ func TestDesktopReadAdapterBoundsHistoryPayload(t *testing.T) {
 	if !ok {
 		t.Fatalf("captured arguments = %#v", tools.arguments)
 	}
-	if arguments["turnLimit"] != 20 {
-		t.Fatalf("turnLimit = %#v, want 20", arguments["turnLimit"])
+	if arguments["turnLimit"] != 10 {
+		t.Fatalf("turnLimit = %#v, want 10", arguments["turnLimit"])
 	}
 	if arguments["includeOutputs"] != false {
 		t.Fatalf("includeOutputs = %#v, want false", arguments["includeOutputs"])
@@ -153,6 +153,38 @@ func TestDesktopReadAdapterFallsBackToBaseReaderWhenDesktopUnavailable(t *testin
 	}
 	if base.readCalls != 1 || base.turnCalls != 1 {
 		t.Fatalf("base reads: thread=%d turns=%d", base.readCalls, base.turnCalls)
+	}
+}
+
+func TestDesktopReadAdapterFallsBackWhenDesktopRejectsHistory(t *testing.T) {
+	base := &desktopReadBase{
+		turnsPayload: json.RawMessage(`{"data":[{"id":"server-turn"}],"nextCursor":"server-next"}`),
+	}
+	tools := desktopReadTools{errors: map[string]error{
+		"read_thread": errors.New("Codex Desktop rejected app tool read_thread"),
+	}}
+	payload, err := NewDesktopReadAdapter(base, tools).ListThreadTurns(context.Background(), "target", "", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base.turnCalls != 1 || string(payload) != string(base.turnsPayload) {
+		t.Fatalf("fallback payload=%s calls=%d", payload, base.turnCalls)
+	}
+}
+
+func TestDesktopReadAdapterFallsBackWhenDesktopHistoryIsEmpty(t *testing.T) {
+	base := &desktopReadBase{
+		turnsPayload: json.RawMessage(`{"data":[{"id":"server-turn"}],"nextCursor":"server-next"}`),
+	}
+	tools := desktopReadTools{responses: map[string]json.RawMessage{
+		"read_thread": json.RawMessage(`{"turns":[]}`),
+	}}
+	payload, err := NewDesktopReadAdapter(base, tools).ListThreadTurns(context.Background(), "target", "", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base.turnCalls != 1 || string(payload) != string(base.turnsPayload) {
+		t.Fatalf("fallback payload=%s calls=%d", payload, base.turnCalls)
 	}
 }
 

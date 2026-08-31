@@ -68,29 +68,21 @@ class AndroidRemoteAppGateway(
         cursor: String?,
     ): ThreadHistory {
         logs.info("history", "load started thread=${threadId.take(8)} cursor=${cursor != null}")
-        return if (cursor == null) {
-            ThreadHistoryParser.fromTurnsResponse(
-                httpClient.threadTurns(
-                    connection.baseUrl,
-                    connection.credential,
-                    threadId,
-                    null,
-                    limit = HISTORY_PAGE_SIZE,
-                ),
+        val history = ThreadHistoryParser.fromTurnsResponse(
+            httpClient.threadTurns(
+                connection.baseUrl,
+                connection.credential,
                 threadId,
-            )
-        } else {
-            ThreadHistoryParser.fromTurnsResponse(
-                httpClient.threadTurns(
-                    connection.baseUrl,
-                    connection.credential,
-                    threadId,
-                    cursor,
-                    limit = HISTORY_PAGE_SIZE,
-                ),
-                threadId,
-            )
-        }
+                cursor,
+                limit = HISTORY_PAGE_SIZE,
+            ),
+            threadId,
+        )
+        logs.info(
+            "history",
+            "load succeeded thread=${threadId.take(8)} entries=${history.entries.size} nextCursor=${history.nextCursor != null}",
+        )
+        return history
     }
 
     override fun send(

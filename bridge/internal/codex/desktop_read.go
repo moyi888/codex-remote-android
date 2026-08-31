@@ -24,8 +24,10 @@ type DesktopReadAdapter struct {
 }
 
 const (
-	// Keep mobile detail reads small enough to finish before the app-tools deadline.
-	desktopHistoryPageLimit       = 20
+	// Codex Desktop's read_thread tool currently accepts at most ten turns.
+	// Keep the Desktop path within that contract; the app-server fallback is
+	// still used whenever the optional Desktop tool cannot serve the request.
+	desktopHistoryPageLimit       = 10
 	desktopHistoryOutputCharLimit = 12000
 	// Desktop app-tools is an optional title/status overlay. It must never hold
 	// the initial mobile snapshot hostage when the Codex UI is busy or closed.
@@ -127,6 +129,12 @@ func (a *DesktopReadAdapter) overlayDesktopThreads(ctx context.Context, baseThre
 
 func (a *DesktopReadAdapter) ReadThread(ctx context.Context, threadID string, includeTurns bool) (json.RawMessage, error) {
 	var response json.RawMessage
+	if a.tools == nil {
+		if a.base != nil {
+			return a.base.ReadThread(ctx, threadID, includeTurns)
+		}
+		return nil, fmt.Errorf("thread history is not configured")
+	}
 	if err := a.tools.CallTool(ctx, threadID, "read_thread", map[string]any{
 		"threadId": threadID, "includeOutputs": includeTurns,
 	}, &response); err != nil {
@@ -139,13 +147,21 @@ func (a *DesktopReadAdapter) ReadThread(ctx context.Context, threadID string, in
 }
 
 func (a *DesktopReadAdapter) ListThreadTurns(ctx context.Context, threadID, cursor string, limit int) (json.RawMessage, error) {
+	if a.tools == nil {
+		if a.base != nil {
+			return a.base.ListThreadTurns(ctx, threadID, cursor, limit)
+		}
+		return nil, fmt.Errorf("thread history is not configured")
+	}
 	pageLimit := limit
 	if pageLimit <= 0 || pageLimit > desktopHistoryPageLimit {
 		pageLimit = desktopHistoryPageLimit
 	}
 	arguments := map[string]any{
-		"threadId":              threadID,
-		"turnLimit":             pageLimit,
+		"threadId":  threadID,
+		"turnLimit": pageLimit,
+		// Conversation messages and status are still included; omitting command
+		// execution output keeps mobile history responses bounded.
 		"includeOutputs":        false,
 		"maxOutputCharsPerItem": desktopHistoryOutputCharLimit,
 	}
@@ -155,10 +171,7 @@ func (a *DesktopReadAdapter) ListThreadTurns(ctx context.Context, threadID, curs
 	var response json.RawMessage
 	err := a.tools.CallTool(ctx, threadID, "read_thread", arguments, &response)
 	if err != nil {
-		if a.base != nil {
-			return a.base.ListThreadTurns(ctx, threadID, cursor, pageLimit)
-		}
-		return nil, err
+		return a.listThreadTurnsFallback(ctx, threadID, cursor, pageLimit, err)
 	}
 	var root struct {
 		Turns  []json.RawMessage `json:"turns"`
@@ -171,10 +184,15 @@ func (a *DesktopReadAdapter) ListThreadTurns(ctx context.Context, threadID, curs
 		NextCursor string `json:"nextCursor"`
 	}
 	if err := json.Unmarshal(response, &root); err != nil {
-		return nil, fmt.Errorf("decode Codex Desktop history: %w", err)
+		return a.listThreadTurnsFallback(ctx, threadID, cursor, pageLimit, err)
 	}
 	if len(root.Turns) == 0 {
 		root.Turns = root.Thread.Turns
+	}
+	// Desktop can report success with an empty payload when a thread is not
+	// currently loaded. Treat the app-server as authoritative for that case.
+	if len(root.Turns) == 0 && a.base != nil {
+		return a.base.ListThreadTurns(ctx, threadID, cursor, pageLimit)
 	}
 	nextCursor := root.NextCursor
 	if nextCursor == "" {
@@ -184,6 +202,20 @@ func (a *DesktopReadAdapter) ListThreadTurns(ctx context.Context, threadID, curs
 		Turns      []json.RawMessage `json:"turns"`
 		NextCursor string            `json:"nextCursor,omitempty"`
 	}{root.Turns, nextCursor})
+}
+
+func (a *DesktopReadAdapter) listThreadTurnsFallback(
+	ctx context.Context,
+	threadID, cursor string,
+	limit int,
+	toolErr error,
+) (json.RawMessage, error) {
+	if a.base != nil {
+		if payload, err := a.base.ListThreadTurns(ctx, threadID, cursor, limit); err == nil {
+			return payload, nil
+		}
+	}
+	return nil, toolErr
 }
 
 type desktopThreadCatalog struct {
