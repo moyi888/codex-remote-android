@@ -198,20 +198,33 @@ func (s *Server) snapshot(writer http.ResponseWriter, request *http.Request) {
 			return
 		}
 	}
-	projects, err := s.adapter.ListProjects(request.Context())
-	if err != nil {
-		writeError(writer, http.StatusBadGateway, "failed to list projects")
-		return
-	}
-	models, err := s.adapter.ListModels(request.Context())
-	if err != nil {
-		writeError(writer, http.StatusBadGateway, "failed to list models")
-		return
-	}
-	threads, err := s.adapter.ListThreads(request.Context())
-	if err != nil {
-		writeError(writer, http.StatusBadGateway, "failed to list threads")
-		return
+	var projects []domain.ProjectOption
+	var models []domain.ModelOption
+	var threads []domain.ThreadSummary
+	if reader, ok := s.adapter.(codex.SnapshotReader); ok {
+		data, err := reader.Snapshot(request.Context())
+		if err != nil {
+			writeError(writer, http.StatusBadGateway, "failed to load snapshot")
+			return
+		}
+		projects, models, threads = data.Projects, data.Models, data.Threads
+	} else {
+		var err error
+		projects, err = s.adapter.ListProjects(request.Context())
+		if err != nil {
+			writeError(writer, http.StatusBadGateway, "failed to list projects")
+			return
+		}
+		models, err = s.adapter.ListModels(request.Context())
+		if err != nil {
+			writeError(writer, http.StatusBadGateway, "failed to list models")
+			return
+		}
+		threads, err = s.adapter.ListThreads(request.Context())
+		if err != nil {
+			writeError(writer, http.StatusBadGateway, "failed to list threads")
+			return
+		}
 	}
 	// Keep collection fields JSON arrays even when an adapter has no items.
 	// A nil Go slice would otherwise be encoded as null, which violates the

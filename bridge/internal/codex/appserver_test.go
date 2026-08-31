@@ -166,6 +166,35 @@ func TestAppServerAdapterListsThreadsNewestFirst(t *testing.T) {
 	}
 }
 
+func TestAppServerAdapterSnapshotReadsThreadCatalogOnce(t *testing.T) {
+	rpc := &snapshotRPC{}
+	adapter := NewHistoryAppServerAdapter(rpc)
+	data, err := adapter.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data.Threads) != 1 || len(data.Models) != 1 {
+		t.Fatalf("snapshot = %+v", data)
+	}
+	if rpc.threadListCalls != 1 {
+		t.Fatalf("thread/list calls = %d, want 1", rpc.threadListCalls)
+	}
+}
+
+type snapshotRPC struct{ threadListCalls int }
+
+func (r *snapshotRPC) Call(_ context.Context, method string, _ any, result any) error {
+	switch method {
+	case "thread/list":
+		r.threadListCalls++
+		return json.Unmarshal([]byte(`{"data":[{"id":"thread-1","preview":"最近任务","cwd":"relative","status":"idle","updatedAt":42}]}`), result)
+	case "model/list":
+		return json.Unmarshal([]byte(`{"data":[{"id":"gpt-test","displayName":"Test"}]}`), result)
+	default:
+		return fmt.Errorf("unexpected method %s", method)
+	}
+}
+
 type recordingCatalog struct {
 	threads []ThreadRecord
 }

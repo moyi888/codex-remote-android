@@ -62,8 +62,19 @@ func Present(state DesktopState) DesktopView {
 }
 
 func deviceLabel(device store.DeviceSummary) string {
+	return device.Name + " · " + deviceLastSeenText(device)
+}
+
+func deviceLastSeenText(device store.DeviceSummary) string {
 	if device.LastSeenAt == nil {
-		return device.Name + " · 尚未连接"
+		return "尚未连接"
 	}
-	return device.Name + " · 最近连接 " + device.LastSeenAt.Local().Format("2006-01-02 15:04")
+	return "最近连接 " + device.LastSeenAt.Local().Format("2006-01-02 15:04")
+}
+
+func deviceIDText(id string) string {
+	if len(id) <= 12 {
+		return id
+	}
+	return id[:8] + "…" + id[len(id)-3:]
 }

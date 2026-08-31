@@ -52,6 +52,39 @@ func (a *AppServerAdapter) ListProjects(ctx context.Context) ([]domain.ProjectOp
 	return result, nil
 }
 
+// Snapshot collects the catalogs using one thread/list pass. The history
+// catalog is also the source for project choices, so calling ListProjects and
+// ListThreads independently would otherwise duplicate a potentially large
+// paginated request during every mobile reconnect.
+func (a *AppServerAdapter) Snapshot(ctx context.Context) (SnapshotData, error) {
+	records, err := a.catalog.Threads(ctx)
+	if err != nil {
+		return SnapshotData{}, err
+	}
+	var projects []Project
+	if _, ok := a.catalog.(*HistoryProjectCatalog); ok {
+		projects = projectsFromThreadRecords(records)
+	} else {
+		projects, err = a.catalog.List(ctx)
+		if err != nil {
+			return SnapshotData{}, err
+		}
+	}
+	projectOptions := make([]domain.ProjectOption, 0, len(projects))
+	for _, project := range projects {
+		projectOptions = append(projectOptions, domain.ProjectOption{ID: project.ID, DisplayName: project.DisplayName})
+	}
+	models, err := a.ListModels(ctx)
+	if err != nil {
+		return SnapshotData{}, err
+	}
+	return SnapshotData{
+		Projects: projectOptions,
+		Models:   models,
+		Threads:  a.threadSummaries(records),
+	}, nil
+}
+
 func (a *AppServerAdapter) ListModels(ctx context.Context) ([]domain.ModelOption, error) {
 	var response struct {
 		Data []struct {
@@ -88,6 +121,10 @@ func (a *AppServerAdapter) ListThreads(ctx context.Context) ([]domain.ThreadSumm
 	if err != nil {
 		return nil, err
 	}
+	return a.threadSummaries(records), nil
+}
+
+func (a *AppServerAdapter) threadSummaries(records []ThreadRecord) []domain.ThreadSummary {
 	sort.SliceStable(records, func(i, j int) bool {
 		if records[i].UpdatedAt != records[j].UpdatedAt {
 			return records[i].UpdatedAt > records[j].UpdatedAt
@@ -110,7 +147,7 @@ func (a *AppServerAdapter) ListThreads(ctx context.Context) ([]domain.ThreadSumm
 			ActiveTurnID: a.currentActiveTurnID(item.ID),
 		})
 	}
-	return threads, nil
+	return threads
 }
 
 func (a *AppServerAdapter) currentActiveTurnID(threadID string) string {

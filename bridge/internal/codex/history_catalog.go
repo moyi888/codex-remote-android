@@ -108,6 +108,13 @@ func (c *HistoryProjectCatalog) List(ctx context.Context) ([]Project, error) {
 	if err != nil {
 		return nil, err
 	}
+	return projectsFromThreadRecords(threads), nil
+}
+
+// projectsFromThreadRecords derives project choices from an already loaded
+// thread catalog. Snapshot collection uses this helper to avoid issuing a
+// second full thread/list request for the same response.
+func projectsFromThreadRecords(threads []ThreadRecord) []Project {
 	projects := make([]Project, 0, len(threads))
 	seen := make(map[string]struct{}, len(threads))
 	for _, thread := range threads {
@@ -123,7 +130,7 @@ func (c *HistoryProjectCatalog) List(ctx context.Context) ([]Project, error) {
 		projects = append(projects, project)
 	}
 	disambiguateProjectNames(projects)
-	return projects, nil
+	return projects
 }
 
 func (c *HistoryProjectCatalog) Resolve(ctx context.Context, id string) (Project, bool, error) {

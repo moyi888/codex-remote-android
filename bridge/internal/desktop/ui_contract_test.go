@@ -53,3 +53,12 @@ func TestDeviceLabelIncludesRecentActivity(t *testing.T) {
 		t.Fatalf("未连接设备标签 = %q", got)
 	}
 }
+
+func TestDeviceIDTextFitsCompactTableColumn(t *testing.T) {
+	if got := deviceIDText("4342f8861234567890abcdef"); got != "4342f886…def" {
+		t.Fatalf("设备 ID 展示 = %q", got)
+	}
+	if got := deviceIDText("short-id"); got != "short-id" {
+		t.Fatalf("短设备 ID 被意外截断: %q", got)
+	}
+}

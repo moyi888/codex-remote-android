@@ -27,6 +27,9 @@ const (
 	// Keep mobile detail reads small enough to finish before the app-tools deadline.
 	desktopHistoryPageLimit       = 20
 	desktopHistoryOutputCharLimit = 12000
+	// Desktop app-tools is an optional title/status overlay. It must never hold
+	// the initial mobile snapshot hostage when the Codex UI is busy or closed.
+	desktopCatalogOverlayTimeout = 2 * time.Second
 )
 
 func NewDesktopReadAdapter(base Adapter, tools AppToolsCaller) *DesktopReadAdapter {
@@ -39,13 +42,50 @@ func (a *DesktopReadAdapter) ListThreads(ctx context.Context) ([]domain.ThreadSu
 	if err != nil {
 		return nil, err
 	}
+	return a.overlayDesktopThreads(ctx, baseThreads), nil
+}
+
+// Snapshot uses the base adapter's combined read path when available, then
+// applies the best-effort Desktop title/status overlay. This keeps pairing
+// responsive even when the app-tools named pipe is unavailable.
+func (a *DesktopReadAdapter) Snapshot(ctx context.Context) (SnapshotData, error) {
+	reader, ok := a.Adapter.(SnapshotReader)
+	if !ok {
+		projects, err := a.ListProjects(ctx)
+		if err != nil {
+			return SnapshotData{}, err
+		}
+		models, err := a.ListModels(ctx)
+		if err != nil {
+			return SnapshotData{}, err
+		}
+		threads, err := a.ListThreads(ctx)
+		if err != nil {
+			return SnapshotData{}, err
+		}
+		return SnapshotData{Projects: projects, Models: models, Threads: threads}, nil
+	}
+	data, err := reader.Snapshot(ctx)
+	if err != nil {
+		return SnapshotData{}, err
+	}
+	data.Threads = a.overlayDesktopThreads(ctx, data.Threads)
+	return data, nil
+}
+
+func (a *DesktopReadAdapter) overlayDesktopThreads(ctx context.Context, baseThreads []domain.ThreadSummary) []domain.ThreadSummary {
+	if a.tools == nil {
+		return baseThreads
+	}
 	caller := ""
 	if len(baseThreads) > 0 {
 		caller = baseThreads[0].ID
 	}
 	var response desktopThreadCatalog
-	if err := a.tools.CallTool(ctx, caller, "list_threads", map[string]any{"limit": 50}, &response); err != nil {
-		return baseThreads, nil
+	overlayCtx, cancel := context.WithTimeout(ctx, desktopCatalogOverlayTimeout)
+	defer cancel()
+	if err := a.tools.CallTool(overlayCtx, caller, "list_threads", map[string]any{"limit": 50}, &response); err != nil {
+		return baseThreads
 	}
 	byID := make(map[string]domain.ThreadSummary, len(baseThreads)+len(response.Threads))
 	for _, thread := range baseThreads {
@@ -82,7 +122,7 @@ func (a *DesktopReadAdapter) ListThreads(ctx context.Context) ([]domain.ThreadSu
 		}
 		return merged[i].ID < merged[j].ID
 	})
-	return merged, nil
+	return merged
 }
 
 func (a *DesktopReadAdapter) ReadThread(ctx context.Context, threadID string, includeTurns bool) (json.RawMessage, error) {

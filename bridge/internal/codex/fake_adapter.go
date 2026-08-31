@@ -38,6 +38,22 @@ func (f *FakeAdapter) ListModels(context.Context) ([]domain.ModelOption, error) 
 	}}, nil
 }
 
+func (f *FakeAdapter) Snapshot(ctx context.Context) (SnapshotData, error) {
+	projects, err := f.ListProjects(ctx)
+	if err != nil {
+		return SnapshotData{}, err
+	}
+	models, err := f.ListModels(ctx)
+	if err != nil {
+		return SnapshotData{}, err
+	}
+	threads, err := f.ListThreads(ctx)
+	if err != nil {
+		return SnapshotData{}, err
+	}
+	return SnapshotData{Projects: projects, Models: models, Threads: threads}, nil
+}
+
 func (f *FakeAdapter) StartTask(_ context.Context, request StartTaskRequest) (domain.ThreadSummary, error) {
 	if request.ProjectID == "" || request.Prompt == "" {
 		return domain.ThreadSummary{}, fmt.Errorf("project and prompt are required")

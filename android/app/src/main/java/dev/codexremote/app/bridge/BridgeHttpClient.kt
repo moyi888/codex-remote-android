@@ -29,7 +29,13 @@ internal fun bridgeHttpOkHttpClient(okHttpClient: OkHttpClient = OkHttpClient())
         .followRedirects(false)
         .followSslRedirects(false)
         .retryOnConnectionFailure(false)
-        .callTimeout(30, TimeUnit.SECONDS)
+        // Snapshot may have to read Codex history on first pairing. Keep a
+        // generous upper bound while explicitly overriding OkHttp's shorter
+        // default socket read timeout, which used to fail at ~10 seconds.
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(45, TimeUnit.SECONDS)
+        .writeTimeout(15, TimeUnit.SECONDS)
+        .callTimeout(45, TimeUnit.SECONDS)
         .build()
 
 class BridgeApiException(

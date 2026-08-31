@@ -20,6 +20,7 @@ import (
 	"github.com/lxn/walk"
 	. "github.com/lxn/walk/declarative"
 	"github.com/moyi888/codex-remote-android/bridge/internal/codex"
+	"github.com/moyi888/codex-remote-android/bridge/internal/store"
 )
 
 const tailscaleDownloadURL = "https://tailscale.com/download/windows"
@@ -80,14 +81,12 @@ func RunApplication(version string) error {
 		countdown       *walk.Label
 		qrView          *walk.ImageView
 		primaryButton   *walk.PushButton
-		chooseButton    *walk.PushButton
-		deviceList      *walk.ListBox
-		revokeButton    *walk.PushButton
+		deviceHeader    *walk.Composite
+		deviceScroll    *walk.ScrollView
 		autostartCheck  *walk.CheckBox
 		autostartAction *walk.Action
 		controller      *Controller
 		currentAction   ViewAction
-		currentIDs      []string
 		currentBitmap   *walk.Bitmap
 		currentQRBytes  []byte
 		exiting         bool
@@ -117,15 +116,6 @@ func RunApplication(version string) error {
 			actions.Go(func(actionCtx context.Context) { _ = controller.Refresh(actionCtx) })
 		}
 	}
-	chooseClicked := func() { chooseCodexExecutable(mainWindow, probe, controller, actions) }
-	revokeClicked := func() {
-		index := deviceList.CurrentIndex()
-		if index < 0 || index >= len(currentIDs) {
-			return
-		}
-		deviceID := currentIDs[index]
-		actions.Go(func(actionCtx context.Context) { _ = controller.RevokeDevice(actionCtx, deviceID) })
-	}
 	autostartChanged := func() {
 		if autostartCheck != nil {
 			enabled := autostartCheck.Checked()
@@ -146,12 +136,15 @@ func RunApplication(version string) error {
 			Label{AssignTo: &titleLabel, Text: "正在检测环境…"},
 			Label{AssignTo: &description, Text: "Codex Remote 正在检查 Tailscale 和 Codex。"},
 			Label{AssignTo: &countdown},
-			ImageView{AssignTo: &qrView, MinSize: Size{Width: 320, Height: 320}, Mode: ImageViewModeZoom},
+			ImageView{AssignTo: &qrView, MinSize: Size{Width: 220, Height: 220}, MaxSize: Size{Width: 280, Height: 280}, Mode: ImageViewModeZoom},
 			PushButton{AssignTo: &primaryButton, Text: "重新检测", OnClicked: primaryClicked},
-			PushButton{AssignTo: &chooseButton, Text: "选择 Codex 程序", OnClicked: chooseClicked},
-			Label{Text: "已配对设备"},
-			ListBox{AssignTo: &deviceList, Model: []string{}},
-			PushButton{AssignTo: &revokeButton, Text: "移除所选设备", OnClicked: revokeClicked},
+			Composite{AssignTo: &deviceHeader, Layout: Grid{Columns: 4, Spacing: 8}, Children: []Widget{
+				Label{Text: "设备", Column: 0},
+				Label{Text: "设备 ID", Column: 1},
+				Label{Text: "最后连接", Column: 2},
+				Label{Text: "操作", Column: 3},
+			}},
+			ScrollView{AssignTo: &deviceScroll, StretchFactor: 1, VerticalFixed: false, HorizontalFixed: true, Layout: VBox{MarginsZero: true, Spacing: 6}},
 			CheckBox{AssignTo: &autostartCheck, Text: "登录 Windows 时自动启动", OnCheckedChanged: autostartChanged},
 		},
 	}
@@ -165,6 +158,38 @@ func RunApplication(version string) error {
 		_ = mainWindow.SetIcon(brandIcon)
 		defer brandIcon.Dispose()
 	}
+	// Device rows are real controls (rather than a multi-select list), so each
+	// row owns its own remove button and remains usable with multiple devices.
+	renderDevices := func(devices []store.DeviceSummary) {
+		if deviceScroll == nil {
+			return
+		}
+		deviceScroll.SetSuspended(true)
+		defer deviceScroll.SetSuspended(false)
+		children := deviceScroll.Children()
+		for index := children.Len() - 1; index >= 0; index-- {
+			child := children.At(index)
+			_ = children.RemoveAt(index)
+			child.Dispose()
+		}
+		builder := NewBuilder(deviceScroll)
+		for _, device := range devices {
+			if device.Revoked {
+				continue
+			}
+			deviceID := device.ID
+			row := Composite{Layout: Grid{Columns: 4, Spacing: 8}, Children: []Widget{
+				Label{Text: device.Name, Column: 0, ColumnSpan: 1},
+				Label{Text: deviceIDText(device.ID), Column: 1, ColumnSpan: 1},
+				Label{Text: deviceLastSeenText(device), Column: 2, ColumnSpan: 1},
+				PushButton{Text: "移除", Column: 3, OnClicked: func() {
+					actions.Go(func(actionCtx context.Context) { _ = controller.RevokeDevice(actionCtx, deviceID) })
+				}},
+			}}
+			_ = row.Create(builder)
+		}
+		deviceScroll.RequestLayout()
+	}
 
 	applyState := func(state DesktopState) {
 		mainWindow.Synchronize(func() {
@@ -176,8 +201,8 @@ func RunApplication(version string) error {
 			_ = description.SetText(view.Description)
 			_ = primaryButton.SetText(actionText(view.PrimaryAction))
 			qrView.SetVisible(view.ShowQR)
-			deviceList.SetVisible(view.ShowDevices)
-			revokeButton.SetVisible(view.ShowDevices)
+			deviceHeader.SetVisible(view.ShowDevices)
+			deviceScroll.SetVisible(view.ShowDevices)
 			if view.ShowQR && len(state.InvitationPNG) > 0 && !bytes.Equal(currentQRBytes, state.InvitationPNG) {
 				if image, err := png.Decode(bytes.NewReader(state.InvitationPNG)); err == nil {
 					if bitmap, err := walk.NewBitmapFromImage(image); err == nil {
@@ -191,16 +216,7 @@ func RunApplication(version string) error {
 					}
 				}
 			}
-			currentIDs = currentIDs[:0]
-			names := make([]string, 0, len(state.Devices))
-			for _, device := range state.Devices {
-				if device.Revoked {
-					continue
-				}
-				currentIDs = append(currentIDs, device.ID)
-				names = append(names, deviceLabel(device))
-			}
-			_ = deviceList.SetModel(names)
+			renderDevices(state.Devices)
 			updateCountdown(countdown, state.ExpiresAt)
 		})
 	}

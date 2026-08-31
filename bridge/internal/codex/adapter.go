@@ -14,6 +14,20 @@ type Capabilities struct {
 	StopTurn    bool `json:"stopTurn"`
 }
 
+// SnapshotData is the read-only state needed by the mobile client on connect.
+// Implementations that can collect the three catalogs efficiently should
+// expose Snapshot so the HTTP handler does not trigger duplicate app-server
+// calls for projects and threads.
+type SnapshotData struct {
+	Projects []domain.ProjectOption
+	Models   []domain.ModelOption
+	Threads  []domain.ThreadSummary
+}
+
+type SnapshotReader interface {
+	Snapshot(context.Context) (SnapshotData, error)
+}
+
 type StartTaskRequest struct {
 	ProjectID string `json:"projectId"`
 	Prompt    string `json:"prompt"`

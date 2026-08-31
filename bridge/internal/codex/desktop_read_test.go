@@ -155,3 +155,26 @@ func TestDesktopReadAdapterFallsBackToBaseReaderWhenDesktopUnavailable(t *testin
 		t.Fatalf("base reads: thread=%d turns=%d", base.readCalls, base.turnCalls)
 	}
 }
+
+func TestDesktopReadAdapterDoesNotBlockSnapshotOnSlowDesktopOverlay(t *testing.T) {
+	base := &desktopReadBase{threads: []domain.ThreadSummary{{ID: "thread-1", Title: "app-server"}}}
+	tools := blockingDesktopCatalogTools{}
+	started := time.Now()
+	threads, err := NewDesktopReadAdapter(base, tools).ListThreads(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(threads) != 1 || threads[0].Title != "app-server" {
+		t.Fatalf("base catalog should be returned after overlay timeout: %+v", threads)
+	}
+	if elapsed := time.Since(started); elapsed > desktopCatalogOverlayTimeout+500*time.Millisecond {
+		t.Fatalf("overlay blocked for %s", elapsed)
+	}
+}
+
+type blockingDesktopCatalogTools struct{}
+
+func (blockingDesktopCatalogTools) CallTool(ctx context.Context, _ string, _ string, _ any, _ any) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
